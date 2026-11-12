@@ -1,0 +1,60 @@
+# Builds the Ubuntu .deb. Built on 22.04 so it also installs on 24.04.
+# Runs by hand (Actions > Build Linux > Run workflow) or on a version tag (v0.1.0), which also
+# attaches the .deb to a GitHub release.
+name: Build Linux
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev build-essential curl file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build .deb
+        run: |
+          npm ci
+          npx tauri build --bundles deb
+          mkdir -p dist
+          cp src-tauri/target/release/bundle/deb/*.deb "dist/dwl-timer_$(node -p 'require("./package.json").version')_amd64.deb"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dwl-timer-deb
+          path: dist/*.deb
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deb=$(basename dist/*.deb)
+          gh release create "$GITHUB_REF_NAME" dist/*.deb --title "$GITHUB_REF_NAME" --prerelease \
+            --notes "Ubuntu 22.04 / 24.04 (amd64). Install with: sudo apt install ./$deb"

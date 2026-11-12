@@ -1,0 +1,15 @@
+{
+  "name": "dwl-timer",
+  "private": true,
+  "version": "0.4.4",
+  "license": "MIT",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icons": "python3 assets/make_icon.py && tauri icon assets/icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

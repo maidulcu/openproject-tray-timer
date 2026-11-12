@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DWL timer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div id="status" class="status">Loading…</div>
+    <nav>
+      <button data-view="timer">Timer</button>
+      <button data-view="away" id="nav-away" hidden>Away</button>
+      <button data-view="settings">Settings</button>
+    </nav>
+  </header>
+
+  <div id="error" class="error" hidden></div>
+  <div id="offline" class="offline" hidden>
+    <span id="offline-text"></span>
+    <details id="waiting-box" hidden><summary>Show</summary><ul id="waiting-list"></ul></details>
+  </div>
+
+  <main>
+    <!-- Running timer, start or switch -->
+    <section id="view-timer" class="view">
+      <div id="queue-refused" class="card refused" hidden>
+        <b>OpenProject refused a change that was waiting to be sent:</b>
+        <div id="qr-action"></div>
+        <ul id="qr-list"></ul>
+        <label id="qr-note-box">Note (the client sees it)
+          <textarea id="qr-note" rows="2"></textarea>
+        </label>
+        <label id="qr-reason-box" hidden>Why does this task need more time, and how much more?
+          (posted on the task for the team, not on the invoice)
+          <textarea id="qr-reason" rows="2"></textarea>
+        </label>
+        <label id="qr-minutes-box" hidden>Minutes to log (only lower)
+          <input id="qr-minutes" type="number" min="1">
+        </label>
+        <div class="row">
+          <button id="btn-qr-retry" class="primary">Send again</button>
+          <button id="btn-qr-discard">Discard this change</button>
+        </div>
+      </div>
+      <div id="running" class="card" hidden>
+        <div id="refused" class="refused" hidden>
+          <b>OpenProject didn't accept the stop, so the timer is still running:</b>
+          <ul id="refused-list"></ul>
+          <label id="reason-box" hidden>Why does this task need more time, and how much more?
+            (posted on the task for the team, not on the invoice)
+            <textarea id="stop-reason" rows="2"></textarea>
+          </label>
+          <label>End at (optional, if you stopped working earlier)
+            <input id="stop-until" type="time">
+          </label>
+        </div>
+        <div class="row-text">
+          <span id="task-hours" class="hint"></span>
+          <button id="btn-open-task" class="link">Open in OpenProject</button>
+        </div>
+        <label><span id="run-comment-label">Note (optional; the client sees it, or the task title if empty)</span>
+          <textarea id="run-comment" rows="2" data-submit="btn-stop"></textarea>
+        </label>
+        <div class="row">
+          <button id="btn-stop" class="primary">Stop timer</button>
+          <button id="btn-save-comment" hidden>Save comment</button>
+        </div>
+      </div>
+
+      <input id="search" type="search" placeholder="Search tasks (subject or ID)" autocomplete="off">
+      <ul id="results" class="results"></ul>
+
+      <details id="today-box" class="today">
+        <summary id="today-sum">Today</summary>
+        <ul id="today-list"></ul>
+      </details>
+
+      <div id="picked" class="card" hidden>
+        <div class="picked-title"></div>
+        <label><span id="pick-comment-label">What will you work on?</span>
+          <textarea id="pick-comment" rows="2" data-submit="btn-go"></textarea>
+        </label>
+        <button id="btn-go" class="primary">Start timer</button>
+        <div id="pick-running" hidden>
+          <p class="hint">Picked the wrong task when you started?</p>
+          <button id="btn-retarget">Move the running timer here instead</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Timer stopped while away -->
+    <section id="view-away" class="view" hidden>
+      <div id="away-none" class="hint">Nothing to answer.</div>
+      <div id="away-waiting" class="hint" hidden></div>
+      <div id="away-form" hidden>
+        <h2>Welcome back</h2>
+        <p>Your timer on <b class="stop-task"></b> stopped at <b id="away-from"></b>: there was no
+          mouse or keyboard input for <b id="away-limit"></b> min. You were away until
+          <b id="away-to"></b> (<b id="away-min"></b> min).</p>
+        <p><b>What was this time?</b></p>
+        <div class="choices">
+          <button id="btn-break-show">Break (prayer, tea, lunch): record it as a break, not billed</button>
+          <button id="btn-not-work">Away, nothing to record</button>
+          <button id="btn-work-show">Client work away from the keyboard (a meeting or call about a task): add <span class="away-min"></span> min</button>
+        </div>
+        <div id="break-form" class="card" hidden>
+          <label>Note (optional, only the team sees it)
+            <input id="break-note" type="text" placeholder="Break" data-submit="btn-break">
+          </label>
+          <button id="btn-break" class="primary">Record <span class="away-min"></span> min break</button>
+        </div>
+        <div id="work-form" class="card" hidden>
+          <label id="work-reason-box" hidden>Why does this task need more time, and how much more?
+            (posted on the task for the team, not on the invoice)
+            <textarea id="work-reason" rows="2"></textarea>
+          </label>
+          <div>On task: <b id="work-task"></b> <button id="btn-work-change" class="link">change</button></div>
+          <div id="work-search-box" hidden>
+            <input id="work-search" type="search" placeholder="Search tasks" autocomplete="off">
+            <ul id="work-results" class="results"></ul>
+          </div>
+          <label>What was the meeting or call about? (required, the client sees this)
+            <textarea id="work-comment" rows="2" data-submit="btn-work"></textarea>
+          </label>
+          <button id="btn-work" class="primary">Add <span class="away-min"></span> min</button>
+        </div>
+        <label class="check"><input id="restart" type="checkbox" checked> Start the timer again on <b class="stop-task"></b></label>
+        <label id="restart-box">Working on
+          <textarea id="restart-comment" rows="2"></textarea>
+        </label>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view" hidden>
+      <label>OpenProject server URL
+        <input id="set-url" type="url" placeholder="https://openproject.example.com">
+      </label>
+      <label>Your API key (OpenProject: My account &gt; Access tokens &gt; API)
+        <input id="set-key" type="password" autocomplete="off">
+      </label>
+      <button id="btn-key-page" class="link">Open the API key page in the browser</button>
+      <label>Stop the timer after this many minutes without input
+        <input id="set-idle" type="number" min="1" value="10">
+      </label>
+      <div class="row">
+        <label>Work starts <input id="set-start" type="time" value="09:00"></label>
+        <label>Work ends <input id="set-end" type="time" value="18:00"></label>
+      </div>
+      <label class="check"><input id="set-remind" type="checkbox" checked> Remind me when I work without a
+        timer, or a timer still runs after work (Monday to Friday)</label>
+      <label class="check"><input id="set-login" type="checkbox" checked> Start at login</label>
+      <button id="btn-save" class="primary">Save and connect</button>
+      <p id="set-msg" class="hint"></p>
+      <details>
+        <summary>What this app records</summary>
+        <p>While a timer runs, it asks the operating system how long it has been since the last
+          mouse or keyboard input. After the limit above it stops the timer at the moment input
+          stopped, and asks you when you are back whether that time was work. During work hours with
+          no timer running, it reads the same "time since last input" every 30 seconds to decide on a
+          reminder, and stores nothing. It never records keystrokes, what you type, screenshots,
+          window titles or which apps you use.</p>
+        <p>OpenProject only receives the time entries you start, stop or add, with your comment.
+          The API key is kept in the system keyring, not in a file.</p>
+      </details>
+      <p class="hint">Idle detection: <span id="idle-status"></span></p>
+      <p class="hint">Version <span id="app-version"></span></p>
+      <button id="btn-update" class="primary" hidden></button>
+    </section>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>

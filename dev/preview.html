@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Timer UI preview (mock backend)</title>
+<script>
+// Loads ui/index.html with a fake window.__TAURI__ (dev/mock-tauri.js) so the page can be
+// checked in a normal browser. Serve the repo root: python3 -m http.server 8765
+fetch("/ui/index.html").then((r) => r.text()).then((html) => {
+  html = html.replace("<head>", '<head><base href="/ui/">').replace("style.css", "style.css?" + Date.now())
+             .replace('<script src="main.js"><\/script>', '<script src="/dev/mock-tauri.js"><\/script><script src="main.js"><\/script>');
+  document.open(); document.write(html); document.close();
+});
+</script>
