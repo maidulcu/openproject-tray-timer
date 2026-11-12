@@ -455,7 +455,7 @@ impl Core {
         if let Some(t) = &self.timer {
             return Err(format!("A timer is already running on \"{}\". Stop it first.", t.task.subject));
         }
-        let now = Utc::now();
+        let now = crate::api::now();
         let entry = TimeEntry {
             id: PENDING,
             ongoing: true,
@@ -604,7 +604,7 @@ impl Core {
         if self.timer.is_none() {
             return Ok(());
         }
-        self.stop_at(Utc::now(), StopInput::default(), Some(from))
+        self.stop_at(crate::api::now(), StopInput::default(), Some(from))
             .await
             .map(|_| ())
             .map_err(|e| format!("Could not stop the timer after you went away: {e}"))

@@ -1,6 +1,6 @@
 [package]
 name = "dwl-timer"
-version = "0.4.4"
+version = "0.4.5"
 description = "Desktop tray timer for OpenProject with idle detection"
 license = "MIT"
 authors = ["Maidul Islam"]

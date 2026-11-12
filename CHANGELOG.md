@@ -2,8 +2,12 @@
 
 Versions follow [semantic versioning](https://semver.org/). Dates are release dates.
 
-## Unreleased
+## 0.4.5 (2026-11-12)
 
+- All times are measured on the server's clock (from the HTTP `Date` header), so a computer clock
+  that is off no longer shows or logs the wrong time.
+- Settings warns when the computer's clock is off by a minute or more.
+- The tray text refreshes every 5 seconds, in step with the window.
 - Plain `http://` server URLs are refused unless the server is on localhost or a private network,
   so the API key is never sent unencrypted over the internet. An existing setup with such a URL
   shows "Not set up" until the URL is changed to `https://` in Settings.

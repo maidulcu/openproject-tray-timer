@@ -41,7 +41,7 @@ pub fn spawn(threshold: Duration, tx: UnboundedSender<IdleEvent>) -> IdleHandle 
 }
 
 fn ago(d: Duration) -> DateTime<Utc> {
-    Utc::now() - chrono::Duration::from_std(d).unwrap_or_default()
+    crate::api::now() - chrono::Duration::from_std(d).unwrap_or_default()
 }
 
 /// Generic polling loop over "how long since the last input".
@@ -133,7 +133,7 @@ mod platform {
                         active_id = Some(proxy.add_user_active_watch().await?);
                     } else if Some(id) == active_id {
                         active_id = None;
-                        let _ = tx.send(IdleEvent::Active { at: Utc::now() });
+                        let _ = tx.send(IdleEvent::Active { at: crate::api::now() });
                     }
                 }
             }

@@ -272,6 +272,13 @@ function render() {
   $("#set-key").placeholder = state.configured ? "Saved in the keyring (leave empty to keep)" : "";
   $("#idle-status").textContent = state.idle_status;
   $("#app-version").textContent = state.version || "";
+  // The computer's clock is off: the app uses the server's clock, but say so (other programs
+  // and the browser timer will still be wrong).
+  const off = state.clock_offset_secs || 0;
+  $("#clock-warn").hidden = Math.abs(off) < 60;
+  $("#clock-warn").textContent = "This computer's clock is " + Math.round(Math.abs(off) / 60) +
+    " min " + (off > 0 ? "behind" : "ahead of") + " the server. The timer uses the server's time; " +
+    "turn on automatic date & time in Ubuntu's settings to fix the clock.";
   $("#btn-update").hidden = !state.update_version;
   $("#btn-update").textContent = "Update to " + (state.update_version || "") + ": install and restart";
 }

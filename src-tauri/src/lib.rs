@@ -53,6 +53,8 @@ struct App {
     /// A newer version found by the updater, ready to install.
     update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
     update_version: Mutex<Option<String>>,
+    /// Last tray title and tooltip set.
+    tray_text: Mutex<(String, String)>,
     /// Today's finished entries, and the running task's hours against its estimate.
     today: Mutex<Vec<Logged>>,
     task_hours: Mutex<Option<TaskHours>>,
@@ -95,6 +97,8 @@ struct RefusalView {
 
 #[derive(Serialize)]
 struct Snapshot {
+    /// Seconds this computer's clock is behind the server's (negative = ahead).
+    clock_offset_secs: i64,
     configured: bool,
     settings: Settings,
     max_idle_minutes: u32,
@@ -144,7 +148,7 @@ async fn snapshot(app: &AppHandle) -> Snapshot {
     let settings = st.settings.lock().unwrap().clone();
     let recent = st.recent.lock().unwrap().clone();
     let core = st.core.lock().await;
-    let now = Utc::now();
+    let now = crate::api::now();
     let timer = match (&core.timer, &core.session) {
         (Some(t), Some(s)) => Some(TimerView {
             entry_id: t.id,
@@ -188,6 +192,7 @@ async fn snapshot(app: &AppHandle) -> Snapshot {
         .clone()
         .filter(|h| timer.as_ref().is_some_and(|t| t.task.id == h.task_id));
     Snapshot {
+        clock_offset_secs: crate::api::clock_offset_secs(),
         configured: core.client.is_some(),
         settings,
         max_idle_minutes: MAX_IDLE_MINUTES,
@@ -287,6 +292,42 @@ fn build_menu(app: &AppHandle, snap: &Snapshot) -> tauri::Result<Menu<tauri::Wry
     Ok(menu)
 }
 
+/// The tray's title and tooltip. Set only when they change, so it can run every few seconds.
+fn set_tray_text(app: &AppHandle, tray: &tauri::tray::TrayIcon, timer: Option<(String, i64)>, configured: bool, offline: bool) {
+    let mut title = match (&timer, configured) {
+        (Some((_, secs)), _) => format!("● {}", fmt_hm(*secs)),
+        (None, true) => "no timer".into(),
+        (None, false) => String::new(),
+    };
+    if offline {
+        title.push_str(" (offline)");
+    }
+    let tip = match &timer {
+        Some((subject, secs)) => format!("DWL timer: {} ({})", subject, fmt_hm(*secs)),
+        None => "DWL timer: no timer running".into(),
+    };
+    let st = app.state::<App>();
+    let mut last = st.tray_text.lock().unwrap();
+    if *last != (title.clone(), tip.clone()) {
+        let _ = tray.set_title(Some(title.clone()));
+        let _ = tray.set_tooltip(Some(tip.clone()));
+        *last = (title, tip);
+    }
+}
+
+/// Keep the tray's minutes in step with the window's clock (the full refresh runs every 30 s).
+async fn refresh_tray_text(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let (timer, configured, offline) = {
+        let st = app.state::<App>();
+        let core = st.core.lock().await;
+        let timer = core.timer.as_ref().zip(core.session.as_ref())
+            .map(|(t, s)| (t.task.subject.clone(), s.worked_secs(crate::api::now())));
+        (timer, core.client.is_some(), core.offline)
+    };
+    set_tray_text(app, &tray, timer, configured, offline);
+}
+
 /// Push the new state to the tray and the window.
 async fn publish(app: &AppHandle) {
     let snap = snapshot(app).await;
@@ -294,20 +335,8 @@ async fn publish(app: &AppHandle) {
         if let Ok(menu) = build_menu(app, &snap) {
             let _ = tray.set_menu(Some(menu));
         }
-        let mut title = match (&snap.timer, snap.configured) {
-            (Some(t), _) => format!("● {}", fmt_hm(t.worked_secs)),
-            (None, true) => "no timer".into(),
-            (None, false) => String::new(),
-        };
-        if snap.offline {
-            title.push_str(" (offline)");
-        }
-        let _ = tray.set_title(Some(title));
-        let tip = match &snap.timer {
-            Some(t) => format!("DWL timer: {} ({})", t.task.subject, fmt_hm(t.worked_secs)),
-            None => "DWL timer: no timer running".into(),
-        };
-        let _ = tray.set_tooltip(Some(tip));
+        let timer = snap.timer.as_ref().map(|t| (t.task.subject.clone(), t.worked_secs));
+        set_tray_text(app, &tray, timer, snap.configured, snap.offline);
     }
     let _ = app.emit_to(WINDOW, "state", &snap);
 }
@@ -601,7 +630,7 @@ async fn run_stop(app: &AppHandle, res: Result<Stop, String>) -> Result<bool, St
 
 #[tauri::command]
 async fn stop_timer(app: AppHandle, input: Option<StopInput>) -> Result<bool, String> {
-    let res = app.state::<App>().core.lock().await.stop(Utc::now(), input.unwrap_or_default()).await;
+    let res = app.state::<App>().core.lock().await.stop(crate::api::now(), input.unwrap_or_default()).await;
     run_stop(&app, res).await
 }
 
@@ -610,7 +639,7 @@ async fn stop_and_start(app: AppHandle, task_id: u64, comment: String, input: Op
     let res = {
         let st = app.state::<App>();
         let mut core = st.core.lock().await;
-        core.stop_and_start(task_id, &comment, Utc::now(), input.unwrap_or_default()).await
+        core.stop_and_start(task_id, &comment, crate::api::now(), input.unwrap_or_default()).await
     };
     run_stop(&app, res).await
 }
@@ -643,7 +672,7 @@ fn debug_fake_away(state: State<'_, App>, minutes: i64) -> Result<(), String> {
     if std::env::var("DWL_TIMER_DEBUG").as_deref() != Ok("1") {
         return Err("debug commands are off".into());
     }
-    let now = Utc::now();
+    let now = crate::api::now();
     let tx = &state.idle_tx;
     tx.send(IdleEvent::Idle { since: now - chrono::Duration::minutes(minutes) }).map_err(|e| e.to_string())?;
     tx.send(IdleEvent::Active { at: now }).map_err(|e| e.to_string())?;
@@ -739,7 +768,7 @@ async fn remind(app: &AppHandle) {
     let s = st.settings.lock().unwrap().clone();
     let (configured, timer) = {
         let core = st.core.lock().await;
-        let timer = core.timer.as_ref().zip(core.session.as_ref()).map(|(t, s)| (t.task.subject.clone(), s.worked_secs(Utc::now())));
+        let timer = core.timer.as_ref().zip(core.session.as_ref()).map(|(t, s)| (t.task.subject.clone(), s.worked_secs(crate::api::now())));
         (core.client.is_some(), timer)
     };
     if !configured {
@@ -765,6 +794,13 @@ async fn remind(app: &AppHandle) {
 }
 
 fn spawn_tickers(app: AppHandle) {
+    let tray_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            refresh_tray_text(&tray_app).await;
+        }
+    });
     tauri::async_runtime::spawn(async move {
         let mut n: u64 = 0;
         loop {
@@ -786,7 +822,7 @@ fn spawn_tickers(app: AppHandle) {
                 let _ = refresh(app.clone()).await;
             }
             // Sleep / restart gaps and stops that failed while offline.
-            let res = app.state::<App>().core.lock().await.tick(Utc::now()).await;
+            let res = app.state::<App>().core.lock().await.tick(crate::api::now()).await;
             handle_due(&app, res).await;
             remind(&app).await;
             // Updates: a minute after start, then every 6 hours.
@@ -820,7 +856,7 @@ async fn connect_on_start(app: AppHandle) {
     set_error(&app, result.err());
     if st.core.lock().await.client.is_some() {
         // Time since the app last ran (shutdown, crash) counts as away; the user is here now.
-        let now = Utc::now();
+        let now = crate::api::now();
         let mut core = st.core.lock().await;
         let gap = core.tick(now).await;
         let back = core.on_idle_event(&IdleEvent::Active { at: now }).await;
@@ -870,6 +906,7 @@ pub fn run() {
                 pick: Mutex::new(None),
                 update: tokio::sync::Mutex::new(None),
                 update_version: Mutex::new(None),
+                tray_text: Mutex::new(Default::default()),
                 today: Mutex::new(vec![]),
                 task_hours: Mutex::new(None),
             });

@@ -37,6 +37,43 @@ pub type Result<T> = std::result::Result<T, ApiError>;
 /// finding out what happened on a tester's computer. Set once by the app; tests leave it unset.
 pub static REQUEST_LOG: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
+/// The server's clock minus this computer's clock, in milliseconds. Timer start times come
+/// from the server, so elapsed time and the hours sent on stop must be measured on the server's
+/// clock too: a computer clock that is a few minutes off would otherwise show and log the wrong
+/// time. Measured from the `Date` header of every answer.
+static CLOCK_OFFSET_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// "Now" on the server's clock. Use this, not `Utc::now()`, for anything compared with a
+/// timer's start.
+pub fn now() -> DateTime<Utc> {
+    Utc::now() + chrono::Duration::milliseconds(CLOCK_OFFSET_MS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// How far this computer's clock is behind the server's, in whole seconds (negative = ahead).
+pub fn clock_offset_secs() -> i64 {
+    CLOCK_OFFSET_MS.load(std::sync::atomic::Ordering::Relaxed) / 1000
+}
+
+/// The new offset after a measurement. `Date` has whole seconds and the request takes time, so
+/// small differences are noise: keep the old value unless the new one is over 2 s away.
+fn next_offset(stored_ms: i64, measured_ms: i64) -> i64 {
+    if (measured_ms - stored_ms).abs() > 2000 { measured_ms } else { stored_ms }
+}
+
+fn note_server_date(date: Option<&reqwest::header::HeaderValue>, sent: DateTime<Utc>, received: DateTime<Utc>) {
+    let Some(server) = date
+        .and_then(|d| d.to_str().ok())
+        .and_then(|d| DateTime::parse_from_rfc2822(d).ok())
+    else {
+        return;
+    };
+    // The server wrote `Date` somewhere during the request, rounded down to the second.
+    let local_mid = sent + (received - sent) / 2;
+    let measured = (server.with_timezone(&Utc) + chrono::Duration::milliseconds(500) - local_mid).num_milliseconds();
+    let stored = CLOCK_OFFSET_MS.load(std::sync::atomic::Ordering::Relaxed);
+    CLOCK_OFFSET_MS.store(next_offset(stored, measured), std::sync::atomic::Ordering::Relaxed);
+}
+
 fn log_request(method: &str, url: &str, status: &str) {
     let Some(path) = REQUEST_LOG.get() else { return };
     // Keep it small: start over past 1 MB.
@@ -268,6 +305,7 @@ impl Client {
             .build()
             .map_err(|e| ApiError::Network(e.to_string()))?;
         let (method, url) = (req.method().to_string(), req.url().to_string());
+        let sent = Utc::now();
         let resp = match self.http.execute(req).await {
             Ok(r) => r,
             Err(e) => {
@@ -276,6 +314,7 @@ impl Client {
             }
         };
         let status = resp.status();
+        note_server_date(resp.headers().get(reqwest::header::DATE), sent, Utc::now());
         log_request(&method, &url, status.as_str());
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
@@ -545,5 +584,14 @@ mod tests {
         assert!(e.ongoing);
         assert_eq!(e.task, Task { id: 1666, subject: "Write API client".into(), project: "Timer app test".into() });
         assert_eq!(e.started_at.to_rfc3339(), "2026-11-05T05:03:35.452+00:00");
+    }
+
+    #[test]
+    fn clock_offset_ignores_noise() {
+        assert_eq!(next_offset(0, 1500), 0);
+        assert_eq!(next_offset(0, -1900), 0);
+        assert_eq!(next_offset(0, 180_000), 180_000);
+        assert_eq!(next_offset(180_000, 181_000), 180_000);
+        assert_eq!(next_offset(180_000, 0), 0);
     }
 }
