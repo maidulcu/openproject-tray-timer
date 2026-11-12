@@ -41,7 +41,7 @@ keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
-zbus = "5"
+zbus = "6"
 futures-util = "0.3"
 
 [profile.release]
