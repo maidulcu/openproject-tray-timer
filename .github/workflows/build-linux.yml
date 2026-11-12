@@ -45,7 +45,7 @@ jobs:
           cp src-tauri/target/release/bundle/deb/*.deb "dist/dwl-timer_$(node -p 'require("./package.json").version')_amd64.deb"
           ls -l dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dwl-timer-deb
           path: dist/*.deb
