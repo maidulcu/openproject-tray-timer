@@ -55,7 +55,7 @@ Built with Tauri 2 (Rust) and a plain HTML/JS window. License: MIT.
 
 ## Install
 
-[Build the `.deb`](#build) (or download one from a release, when there are releases) and install it:
+Download the `.deb` from the [latest release](https://github.com/maidulcu/openproject-tray-timer/releases/latest) (Ubuntu 22.04 / 24.04, amd64), or [build it yourself](#build), and install it:
 
 ```bash
 sudo apt install ./dwl-timer_<version>_amd64.deb

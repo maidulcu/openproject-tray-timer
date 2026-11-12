@@ -22,7 +22,11 @@ const hms = (secs) => {
   secs = Math.max(0, Math.floor(secs));
   return hm(secs) + ":" + String(secs % 60).padStart(2, "0");
 };
-const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// The server's clock minus this computer's, in ms. Times come from the server; people read and
+// type them on their own screen clock, so convert both ways.
+const offsetMs = () => (state?.clock_offset_secs || 0) * 1000;
+const onScreen = (iso) => new Date(Date.parse(iso) - offsetMs());
+const clock = (iso) => onScreen(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const taskLabel = (t) => `#${t.id} ${t.subject}`;
 const recentComment = (id) => state?.recent.find((r) => r.task.id === id)?.comment || "";
 // Same list as tracker::NOTE_REQUIRED_TASKS: these tasks' titles say nothing to the client.
@@ -34,7 +38,7 @@ const noteLabel = (task) => noteRequired(task)
 function workedSecs() {
   // The snapshot's worked_secs is from when it was taken; keep counting locally.
   if (!state?.timer) return 0;
-  return state.timer.worked_secs + (Date.now() - state.receivedAt) / 1000;
+  return state.timer.worked_secs + (performance.now() - state.receivedAt) / 1000;
 }
 
 function showError(msg) {
@@ -204,7 +208,7 @@ function render() {
     }
     $("#reason-box").hidden = !p.needs_reason;
     if (p.until && !$("#stop-until").value && document.activeElement !== $("#stop-until")) {
-      $("#stop-until").value = new Date(p.until).toTimeString().slice(0, 5);
+      $("#stop-until").value = onScreen(p.until).toTimeString().slice(0, 5);
     }
     $("#btn-stop").textContent = "Try stopping again";
   } else {
@@ -290,7 +294,7 @@ function escapeHtml(s) {
 }
 
 function setState(s) {
-  state = { ...s, receivedAt: Date.now() };
+  state = { ...s, receivedAt: performance.now() };
   render();
   if (view === "timer" && !$("#search").value && document.activeElement !== $("#search")) showDefaultList();
 }
@@ -392,7 +396,8 @@ function untilIso() {
   const d = new Date();
   d.setHours(h, m, 0, 0);
   if (d > new Date()) d.setDate(d.getDate() - 1);
-  return d.toISOString();
+  // Typed on this computer's clock: convert to the server's.
+  return new Date(d.getTime() + offsetMs()).toISOString();
 }
 function stopInput() {
   return { comment: $("#run-comment").value, reason: $("#stop-reason").value || null, until: untilIso() };

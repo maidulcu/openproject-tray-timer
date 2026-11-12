@@ -818,7 +818,16 @@ fn spawn_tickers(app: AppHandle) {
                 let core = st.core.lock().await;
                 core.offline || !core.queue.is_empty()
             };
-            if n % 4 == 0 || busy {
+            // A gap since the last tick is either sleep or this computer's clock being changed
+            // (e.g. fixed after the clock warning). Ask the server first: that re-measures the
+            // clock difference, so a clock change doesn't look like time away.
+            let gap = {
+                let core = st.core.lock().await;
+                core.session.as_ref().and_then(|s| s.last_seen).is_some_and(|l| {
+                    (crate::api::now() - l).num_seconds() >= crate::tracker::GAP
+                })
+            };
+            if n % 4 == 0 || busy || gap {
                 let _ = refresh(app.clone()).await;
             }
             // Sleep / restart gaps and stops that failed while offline.

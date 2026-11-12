@@ -2,6 +2,13 @@
 
 Versions follow [semantic versioning](https://semver.org/). Dates are release dates.
 
+## 0.4.6 (2026-11-12)
+
+- Changing the computer's clock (for example fixing it after the clock warning) no longer looks
+  like time away: on a gap the app re-measures the clock difference with the server first.
+- The window's live counter uses a monotonic clock, so it doesn't jump when the clock changes.
+- Start and away times are shown, and a typed "End at" time is read, on the computer's own clock.
+
 ## 0.4.5 (2026-11-12)
 
 - All times are measured on the server's clock (from the HTTP `Date` header), so a computer clock
