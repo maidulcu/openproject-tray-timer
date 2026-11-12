@@ -3,6 +3,10 @@ name = "dwl-timer"
 version = "0.4.4"
 description = "Desktop tray timer for OpenProject with idle detection"
 license = "MIT"
+authors = ["Maidul Islam"]
+repository = "https://github.com/maidulcu/openproject-tray-timer"
+homepage = "https://github.com/maidulcu/openproject-tray-timer"
+keywords = ["openproject", "time-tracking", "tauri", "tray", "idle"]
 edition = "2021"
 rust-version = "1.82"
 

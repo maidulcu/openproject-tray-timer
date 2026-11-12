@@ -12,7 +12,7 @@
     settings: { server_url: "http://localhost:8080", idle_minutes: 10, work_start: "09:00", work_end: "18:00", reminders: true, start_at_login: true },
     user: { id: 11, name: "Timer Test" }, timer: null, idle_stop: null, stop_problem: null,
     offline: false, waiting: [], refusal: null,
-    break_available: true, version: "0.4.2",
+    break_available: true, version: "0.4.4",
     today: [
       { id: 501, task: { id: 1667, subject: "Design tray menu", project: "Timer app test" }, hours: 1.5, comment: "Tray layout" },
       { id: 502, task: { id: 1791, subject: "Breaks", project: "Internal" }, hours: 0.25, comment: "Tea" },

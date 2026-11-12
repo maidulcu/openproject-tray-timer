@@ -2,7 +2,15 @@
   "name": "dwl-timer",
   "private": true,
   "version": "0.4.4",
+  "description": "Tray timer for OpenProject with idle detection",
   "license": "MIT",
+  "author": "Maidul Islam",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maidulcu/openproject-tray-timer.git"
+  },
+  "homepage": "https://github.com/maidulcu/openproject-tray-timer",
+  "bugs": "https://github.com/maidulcu/openproject-tray-timer/issues",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

@@ -7,6 +7,8 @@ return what that time was.
 
 Built with Tauri 2 (Rust) and a plain HTML/JS window. License: MIT.
 
+![Demo: pick a task, start the timer, come back after being away](docs/screenshots/demo.gif)
+
 | Running timer | Back after being away | Today | Settings |
 |---|---|---|---|
 | ![Running timer](docs/screenshots/timer.png) | ![Away question](docs/screenshots/away.png) | ![Today list](docs/screenshots/today.png) | ![Settings](docs/screenshots/settings.png) |
@@ -122,7 +124,7 @@ npm run build   # release build: .deb on Linux, .app on macOS (src-tauri/target/
 Or build the Ubuntu `.deb` in Docker from any machine: `scripts/build-deb-docker.sh` writes it to
 `dist/`. On an Apple Silicon Mac use Colima with Rosetta (`colima start --vz-rosetta`).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and the UI preview.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and the UI preview, and [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 ## Your own updates
 

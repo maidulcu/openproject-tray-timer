@@ -6,7 +6,7 @@
 // checked in a normal browser. Serve the repo root: python3 -m http.server 8765
 fetch("/ui/index.html").then((r) => r.text()).then((html) => {
   html = html.replace("<head>", '<head><base href="/ui/">').replace("style.css", "style.css?" + Date.now())
-             .replace('<script src="main.js"><\/script>', '<script src="/dev/mock-tauri.js"><\/script><script src="main.js"><\/script>');
+             .replace('<script src="main.js"><\/script>', '<script src="/dev/mock-tauri.js?' + Date.now() + '"><\/script><script src="main.js?' + Date.now() + '"><\/script>');
   document.open(); document.write(html); document.close();
 });
 </script>

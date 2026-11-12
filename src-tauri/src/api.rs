@@ -119,7 +119,26 @@ pub fn normalize_base_url(raw: &str) -> std::result::Result<String, String> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Server URL must start with http:// or https://".into());
     }
+    if parsed.scheme() == "http" && !is_local_host(&parsed) {
+        return Err("Use https:// for this server: over plain http:// your API key would be sent unencrypted. \
+                    (http:// is allowed only for localhost and private network addresses.)"
+            .into());
+    }
     Ok(with_scheme)
+}
+
+/// Loopback, private network addresses and local-only names (.local, .lan, .internal, .localhost),
+/// where plain http doesn't cross the internet.
+fn is_local_host(u: &url::Url) -> bool {
+    match u.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || [".localhost", ".local", ".lan", ".internal", ".home.arpa"].iter().any(|s| d.ends_with(s))
+        }
+        None => false,
+    }
 }
 
 fn filters(f: Value) -> String {
@@ -489,6 +508,12 @@ mod tests {
         assert_eq!(normalize_base_url(" http://localhost:8080 ").unwrap(), "http://localhost:8080");
         assert!(normalize_base_url("").is_err());
         assert!(normalize_base_url("ftp://x").is_err());
+        // Plain http only where it doesn't cross the internet.
+        assert!(normalize_base_url("http://op.example.com").unwrap_err().contains("https"));
+        for ok in ["http://127.0.0.1:8080", "http://192.168.1.20", "http://10.0.0.5", "http://[::1]:8080",
+                   "http://openproject.lan", "http://op.local", "http://op.localhost"] {
+            assert_eq!(normalize_base_url(ok).unwrap(), ok);
+        }
     }
 
     #[test]
