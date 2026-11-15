@@ -48,6 +48,8 @@ Built with Tauri 2 (Rust) and a plain HTML/JS window. License: MIT.
   when you work for 10 minutes with no timer running, and every hour after work hours while a
   timer still runs.
 - **Today**: today's entries and total, and the running task's hours against its estimate.
+- **Breaks**: a timer on the "Breaks" task (see [Optional server conventions](#optional-server-conventions))
+  is never stopped for being away or asleep; the evening reminder catches a forgotten one.
 - **Offline**: when the server can't be reached the timer keeps working. Changes wait in a queue
   with their real times and are sent in order once the server answers.
 - **Refused stops**: if the server refuses an entry (HTTP 422), the timer keeps running and the
@@ -58,7 +60,8 @@ Built with Tauri 2 (Rust) and a plain HTML/JS window. License: MIT.
   elsewhere is noticed.
 - **Updates**: installed apps check your update server a minute after starting and then every
   hour (also right after waking from sleep), and offer to install new versions from the tray and
-  a banner in the window (see [Your own updates](#your-own-updates)).
+  a banner in the window (see [Your own updates](#your-own-updates)). *Check for updates* in the
+  tray and Settings asks right away. While an update waits, the notification repeats every 3 hours.
 - Starts at login (can be turned off). Only one copy runs. *Quit* leaves a running timer running
   in OpenProject.
 
