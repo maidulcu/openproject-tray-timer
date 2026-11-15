@@ -29,11 +29,11 @@ const onScreen = (iso) => new Date(Date.parse(iso) - offsetMs());
 const clock = (iso) => onScreen(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const taskLabel = (t) => `#${t.id} ${t.subject}`;
 const recentComment = (id) => state?.recent.find((r) => r.task.id === id)?.comment || "";
-// Same list as tracker::NOTE_REQUIRED_TASKS: these tasks' titles say nothing to the client.
+// Same list as tracker::NOTE_REQUIRED_TASKS: these tasks' titles don't say what the work was.
 const noteRequired = (task) => ["general work"].includes((task?.subject || "").trim().toLowerCase());
 const noteLabel = (task) => noteRequired(task)
-  ? "Note (required on this task; the client sees it)"
-  : "Note (optional; the client sees it, or the task title if empty)";
+  ? "Note (required on this task: what did you work on?)"
+  : "Note (optional)";
 
 function workedSecs() {
   // The snapshot's worked_secs is from when it was taken; keep counting locally.
@@ -284,6 +284,8 @@ function render() {
     " min " + (off > 0 ? "behind" : "ahead of") + " the server. The timer uses the server's time; " +
     "turn on automatic date & time in Ubuntu's settings to fix the clock.";
   $("#btn-update").hidden = !state.update_version;
+  $("#update-banner").hidden = !state.update_version;
+  $("#update-banner-v").textContent = state.update_version || "";
   $("#btn-update").textContent = "Update to " + (state.update_version || "") + ": install and restart";
 }
 let settingsDirty = false;
@@ -493,6 +495,28 @@ $("#btn-qr-retry").onclick = () => {
 };
 $("#btn-qr-discard").onclick = () => {
   if (confirm("Discard this change? It won't be sent to OpenProject, and time in it is not logged.")) act("discard_refused", {});
+};
+
+$("#btn-check-update").onclick = async () => {
+  const b = $("#btn-check-update"), m = $("#update-msg");
+  b.disabled = true;
+  m.hidden = false;
+  m.classList.remove("warn");
+  m.textContent = "Checking…";
+  try {
+    m.textContent = await invoke("check_for_updates");
+  } catch (e) {
+    m.textContent = String(e);
+    m.classList.add("warn");
+  } finally {
+    b.disabled = false;
+  }
+};
+
+$("#btn-update-banner").onclick = () => {
+  $("#btn-update-banner").disabled = true;
+  $("#btn-update-banner").textContent = "Installing… (Ubuntu may ask for your password)";
+  act("install_update", {});
 };
 
 $("#btn-update").onclick = () => {

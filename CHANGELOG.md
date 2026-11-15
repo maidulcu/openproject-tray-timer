@@ -2,6 +2,20 @@
 
 Versions follow [semantic versioning](https://semver.org/). Dates are release dates.
 
+## 0.4.7 (2026-11-15)
+
+- "Check for updates" in Settings and the tray menu, with the answer in words; a failed check or
+  install is no longer silent, and a failed install offers the update again.
+- A "Version x is ready" banner with an install button on every screen, not only in Settings.
+- A timer on the "Breaks" task is never stopped for being away or asleep (being away is what a
+  break is). The evening "still running" reminder catches a forgotten one.
+- Design: the header (with the running clock) stays in view when scrolling; the task list uses the
+  window's height; the start card opens right under the search box; the away question's answers
+  have a title and a detail line; "Open in OpenProject" stays on one line.
+- Simpler note labels.
+- Default work hours end at 17:00.
+- Live test: the name-in-note refusal uses the test user's own name, so it works on any server.
+
 ## 0.4.6 (2026-11-12)
 
 - Changing the computer's clock (for example fixing it after the clock warning) no longer looks

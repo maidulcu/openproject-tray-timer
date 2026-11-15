@@ -165,8 +165,10 @@ async fn rules_plugin_refusals() {
     core.refresh().await.unwrap();
     assert!(matches!(core.stop(Utc::now(), StopInput::default()).await.unwrap(), Stop::Refused(_)));
     assert!(core.timer.is_some() && core.stop_problem.is_some());
-    // A team member's name in the note: the server refuses, the timer still runs.
-    let named = StopInput { comment: Some("Jonas fixed the menu".into()), ..StopInput::default() };
+    // A person's name in the note (here the test user's own first name, which the rules plugin
+    // counts like any user's): the server refuses, the timer still runs.
+    let who = c.me().await.unwrap().name.split_whitespace().next().unwrap().to_string();
+    let named = StopInput { comment: Some(format!("{who} fixed the menu")), ..StopInput::default() };
     let Stop::Refused(msgs) = core.stop(Utc::now(), named).await.unwrap() else { panic!("not refused") };
     println!("server said: {msgs:?}");
     assert!(c.running_timer().await.unwrap().is_some_and(|t| t.id == raw.id));
@@ -196,7 +198,7 @@ async fn rules_plugin_refusals() {
     // Refused while being sent from the queue: sending pauses, the note is fixed, it goes up.
     core.client = Some(dead_client());
     core.offline = true;
-    core.start(general, "Weekly sync with Jonas").await.unwrap();
+    core.start(general, &format!("Weekly sync with {who}")).await.unwrap();
     assert!(matches!(core.stop(Utc::now(), StopInput::default()).await.unwrap(), Stop::Done));
     core.client = Some(c.clone());
     core.refresh().await.unwrap();
@@ -304,6 +306,32 @@ async fn break_answer() {
     assert!(today.iter().all(|l| l.id != core.timer.as_ref().unwrap().id), "running timer not listed");
     let h = c.task_hours(task.id).await.unwrap();
     assert!(h.spent >= 0.5, "the 30 minutes before the break: {h:?}");
+    clean(&c).await;
+}
+
+/// A break timer (started on the "Breaks" task, e.g. from the web page's Break button) is
+/// never stopped for being away or asleep: being away is what a break is.
+#[tokio::test]
+#[ignore]
+async fn break_timer_survives_idle() {
+    let c = client();
+    clean(&c).await;
+    let mut core = Core::new(None, 10 * 60);
+    core.connect(c.clone()).await.unwrap();
+    let breaks = core.break_task.clone().expect("a task titled Breaks");
+    core.start(breaks.id, "Lunch").await.unwrap();
+    let id = core.timer.as_ref().unwrap().id;
+    let start = core.session.as_ref().unwrap().started_at;
+    let m = |n| start + chrono::Duration::minutes(n);
+
+    // Away for 40 minutes, then a 50-minute sleep gap: no stop, no question.
+    core.on_idle_event(&IdleEvent::Idle { since: m(1) }).await.unwrap();
+    assert!(!core.on_idle_event(&IdleEvent::Active { at: m(41) }).await.unwrap());
+    assert!(!core.tick(m(42)).await.unwrap());
+    assert!(!core.tick(m(92)).await.unwrap(), "no away question after a sleep gap");
+    assert!(core.idle_stop.is_none());
+    assert_eq!(core.timer.as_ref().map(|t| t.id), Some(id), "the break timer still runs");
+    assert!(c.running_timer().await.unwrap().is_some_and(|t| t.id == id));
     clean(&c).await;
 }
 

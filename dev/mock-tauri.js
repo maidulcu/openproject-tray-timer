@@ -9,10 +9,10 @@
     { id: 1700, subject: "General work", project: "Timer app test" },
   ];
   let s = { configured: true, max_idle_minutes: 10,
-    settings: { server_url: "http://localhost:8080", idle_minutes: 10, work_start: "09:00", work_end: "18:00", reminders: true, start_at_login: true },
+    settings: { server_url: "http://localhost:8080", idle_minutes: 10, work_start: "09:00", work_end: "17:00", reminders: true, start_at_login: true },
     user: { id: 11, name: "Timer Test" }, timer: null, idle_stop: null, stop_problem: null,
     offline: false, waiting: [], refusal: null,
-    break_available: true, version: "0.4.5",
+    break_available: true, version: "0.4.7",
     today: [
       { id: 501, task: { id: 1667, subject: "Design tray menu", project: "Timer app test" }, hours: 1.5, comment: "Tray layout" },
       { id: 502, task: { id: 1791, subject: "Breaks", project: "Internal" }, hours: 0.25, comment: "Tea" },
@@ -36,6 +36,7 @@
   };
   const cmds = {
     get_state: () => snap(),
+    check_for_updates: () => new Promise((r) => setTimeout(() => r("You have the latest version (0.4.7)."), 600)),
     take_view: () => "timer",
     take_pick: () => null,
     hide_window: () => null,
@@ -77,6 +78,8 @@
     s.timer = null;
     emit("state", snap()); emit("navigate", "away");
   };
+  // mockUpdate("0.4.8"): an update is ready to install.
+  window.mockUpdate = (v) => { s.update_version = v; emit("state", snap()); };
   // mockRefuse(["#1666 is over its estimate ..."], true): the next stop is refused.
   window.mockRefuse = (messages, reason = false) => { refuse = { messages, reason }; };
   // mockOffline(): offline with two waiting changes, the first one refused on resend.

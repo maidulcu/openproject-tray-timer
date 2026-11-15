@@ -15,6 +15,10 @@
       <button data-view="settings">Settings</button>
     </nav>
   </header>
+  <div id="update-banner" class="banner" hidden>
+    <span>Version <b id="update-banner-v"></b> is ready.</span>
+    <button id="btn-update-banner" class="primary">Install and restart</button>
+  </div>
 
   <div id="error" class="error" hidden></div>
   <div id="offline" class="offline" hidden>
@@ -29,11 +33,11 @@
         <b>OpenProject refused a change that was waiting to be sent:</b>
         <div id="qr-action"></div>
         <ul id="qr-list"></ul>
-        <label id="qr-note-box">Note (the client sees it)
+        <label id="qr-note-box">Note
           <textarea id="qr-note" rows="2"></textarea>
         </label>
         <label id="qr-reason-box" hidden>Why does this task need more time, and how much more?
-          (posted on the task for the team, not on the invoice)
+          (posted as a comment on the task)
           <textarea id="qr-reason" rows="2"></textarea>
         </label>
         <label id="qr-minutes-box" hidden>Minutes to log (only lower)
@@ -49,7 +53,7 @@
           <b>OpenProject didn't accept the stop, so the timer is still running:</b>
           <ul id="refused-list"></ul>
           <label id="reason-box" hidden>Why does this task need more time, and how much more?
-            (posted on the task for the team, not on the invoice)
+            (posted as a comment on the task)
             <textarea id="stop-reason" rows="2"></textarea>
           </label>
           <label>End at (optional, if you stopped working earlier)
@@ -60,7 +64,7 @@
           <span id="task-hours" class="hint"></span>
           <button id="btn-open-task" class="link">Open in OpenProject</button>
         </div>
-        <label><span id="run-comment-label">Note (optional; the client sees it, or the task title if empty)</span>
+        <label><span id="run-comment-label">Note (optional)</span>
           <textarea id="run-comment" rows="2" data-submit="btn-stop"></textarea>
         </label>
         <div class="row">
@@ -70,13 +74,6 @@
       </div>
 
       <input id="search" type="search" placeholder="Search tasks (subject or ID)" autocomplete="off">
-      <ul id="results" class="results"></ul>
-
-      <details id="today-box" class="today">
-        <summary id="today-sum">Today</summary>
-        <ul id="today-list"></ul>
-      </details>
-
       <div id="picked" class="card" hidden>
         <div class="picked-title"></div>
         <label><span id="pick-comment-label">What will you work on?</span>
@@ -88,6 +85,13 @@
           <button id="btn-retarget">Move the running timer here instead</button>
         </div>
       </div>
+      <ul id="results" class="results"></ul>
+
+      <details id="today-box" class="today">
+        <summary id="today-sum">Today</summary>
+        <ul id="today-list"></ul>
+      </details>
+
     </section>
 
     <!-- Timer stopped while away -->
@@ -101,9 +105,9 @@
           <b id="away-to"></b> (<b id="away-min"></b> min).</p>
         <p><b>What was this time?</b></p>
         <div class="choices">
-          <button id="btn-break-show">Break (prayer, tea, lunch): record it as a break, not billed</button>
-          <button id="btn-not-work">Away, nothing to record</button>
-          <button id="btn-work-show">Client work away from the keyboard (a meeting or call about a task): add <span class="away-min"></span> min</button>
+          <button id="btn-break-show"><b>Break</b><span class="sub">Prayer, tea or lunch. Recorded as a break, not billed.</span></button>
+          <button id="btn-not-work"><b>Away</b><span class="sub">Nothing to record.</span></button>
+          <button id="btn-work-show"><b>Work away from the keyboard</b><span class="sub">A meeting or call about a task: adds <span class="away-min"></span> min to it.</span></button>
         </div>
         <div id="break-form" class="card" hidden>
           <label>Note (optional, only the team sees it)
@@ -113,7 +117,7 @@
         </div>
         <div id="work-form" class="card" hidden>
           <label id="work-reason-box" hidden>Why does this task need more time, and how much more?
-            (posted on the task for the team, not on the invoice)
+            (posted as a comment on the task)
             <textarea id="work-reason" rows="2"></textarea>
           </label>
           <div>On task: <b id="work-task"></b> <button id="btn-work-change" class="link">change</button></div>
@@ -121,13 +125,13 @@
             <input id="work-search" type="search" placeholder="Search tasks" autocomplete="off">
             <ul id="work-results" class="results"></ul>
           </div>
-          <label>What was the meeting or call about? (required, the client sees this)
+          <label>What was the meeting or call about? (required)
             <textarea id="work-comment" rows="2" data-submit="btn-work"></textarea>
           </label>
           <button id="btn-work" class="primary">Add <span class="away-min"></span> min</button>
         </div>
         <label class="check"><input id="restart" type="checkbox" checked> Start the timer again on <b class="stop-task"></b></label>
-        <label id="restart-box">Working on
+        <label id="restart-box">Note for the restarted timer (optional)
           <textarea id="restart-comment" rows="2"></textarea>
         </label>
       </div>
@@ -147,7 +151,7 @@
       </label>
       <div class="row">
         <label>Work starts <input id="set-start" type="time" value="09:00"></label>
-        <label>Work ends <input id="set-end" type="time" value="18:00"></label>
+        <label>Work ends <input id="set-end" type="time" value="17:00"></label>
       </div>
       <label class="check"><input id="set-remind" type="checkbox" checked> Remind me when I work without a
         timer, or a timer still runs after work (Monday to Friday)</label>
@@ -166,7 +170,11 @@
           The API key is kept in the system keyring, not in a file.</p>
       </details>
       <p class="hint">Idle detection: <span id="idle-status"></span></p>
-      <p class="hint">Version <span id="app-version"></span></p>
+      <div class="row-text">
+        <p class="hint">Version <span id="app-version"></span></p>
+        <button id="btn-check-update" class="link">Check for updates</button>
+      </div>
+      <p id="update-msg" class="hint" hidden></p>
       <p id="clock-warn" class="hint warn" hidden></p>
       <button id="btn-update" class="primary" hidden></button>
     </section>

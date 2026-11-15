@@ -121,8 +121,9 @@ mod tests {
     #[test]
     fn still_running_after_work_end_hourly() {
         let mut r = Reminders::default();
-        assert!(run(&mut r, at(5, 17, 0), 59, true, Some(5)).is_empty());
-        let got = run(&mut r, at(5, 18, 0), 125, true, Some(5));
+        // Default work end 17:00: quiet before, then hourly.
+        assert!(run(&mut r, at(5, 16, 0), 59, true, Some(5)).is_empty());
+        let got = run(&mut r, at(5, 17, 0), 125, true, Some(5));
         assert_eq!(got, vec![(0, Nudge::StillRunning), (60, Nudge::StillRunning), (120, Nudge::StillRunning)]);
     }
 

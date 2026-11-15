@@ -286,6 +286,9 @@ fn build_menu(app: &AppHandle, snap: &Snapshot) -> tauri::Result<Menu<tauri::Wry
         let text = format!("Update to {v}: install and restart");
         menu.append(&MenuItem::with_id(app, "update", text, true, None::<&str>)?)?;
     }
+    if snap.update_version.is_none() {
+        menu.append(&MenuItem::with_id(app, "check-update", "Check for updates", true, None::<&str>)?)?;
+    }
     menu.append(&MenuItem::with_id(app, "refresh", "Refresh from server", snap.configured, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "quit", "Quit (a running timer keeps running)", true, None::<&str>)?)?;
@@ -445,15 +448,15 @@ async fn open_in_openproject(app: AppHandle, path: String) -> Result<(), String>
 }
 
 /// Ask the update server for a newer version (installed builds only).
-async fn check_update(app: &AppHandle) {
+/// Ask the update server for a newer version. `Ok(Some(v))`: version `v` is ready to install;
+/// `Ok(None)`: this is the latest. Runs a minute after start, every 6 hours, and from "Check for
+/// updates" (tray and Settings).
+async fn check_update(app: &AppHandle) -> Result<Option<String>, String> {
     if cfg!(debug_assertions) {
-        return;
+        return Err("Update checks are off in development builds.".into());
     }
     use tauri_plugin_updater::UpdaterExt;
-    let updater = match app.updater() {
-        Ok(u) => u,
-        Err(e) => return log::warn!("updater: {e}"),
-    };
+    let updater = app.updater().map_err(|e| format!("Updates aren't set up: {e}"))?;
     match updater.check().await {
         Ok(Some(update)) => {
             let st = app.state::<App>();
@@ -464,9 +467,22 @@ async fn check_update(app: &AppHandle) {
                 notify(app, "DWL timer update", &format!("Version {v} is ready. Install it from the tray menu."));
             }
             publish(app).await;
+            Ok(Some(v))
         }
-        Ok(None) => {}
-        Err(e) => log::warn!("update check failed: {e}"),
+        Ok(None) => Ok(None),
+        Err(e) => {
+            log::warn!("update check failed: {e}");
+            Err(format!("Couldn't reach the update server ({e}). Try again in a moment."))
+        }
+    }
+}
+
+/// "Check for updates": the answer in words, for Settings and the tray.
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> Result<String, String> {
+    match check_update(&app).await? {
+        Some(v) => Ok(format!("Version {v} is ready: install it with the button below.")),
+        None => Ok(format!("You have the latest version ({}).", app.package_info().version)),
     }
 }
 
@@ -478,8 +494,10 @@ async fn check_update(app: &AppHandle) {
 async fn install_update(app: AppHandle) -> Result<(), String> {
     let update = app.state::<App>().update.lock().await.take().ok_or("No update is waiting.")?;
     if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-        let msg = format!("The update could not be installed: {e}");
+        let msg = format!("The update could not be installed: {e}. Try again, or use Check for updates.");
         set_error(&app, Some(msg.clone()));
+        // Offer it again (the failed attempt used it up).
+        let _ = check_update(&app).await;
         publish(&app).await;
         return Err(msg);
     }
@@ -692,6 +710,15 @@ fn on_menu(app: &AppHandle, id: &str) {
                 }
             });
         }
+        "check-update" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let msg = match check_for_updates(app.clone()).await {
+                    Ok(m) | Err(m) => m,
+                };
+                notify(&app, "DWL timer", &msg);
+            });
+        }
         "away" => show_view(app, "away"),
         "settings" => show_view(app, "settings"),
         "quit" => app.exit(0),
@@ -836,7 +863,7 @@ fn spawn_tickers(app: AppHandle) {
             remind(&app).await;
             // Updates: a minute after start, then every 6 hours.
             if n == 2 || n % 720 == 0 {
-                check_update(&app).await;
+                let _ = check_update(&app).await;
             }
         }
     });
@@ -943,6 +970,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
+            check_for_updates,
             take_view,
             take_pick,
             hide_window,

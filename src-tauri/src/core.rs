@@ -636,9 +636,17 @@ impl Core {
             || self.idle_stop.as_ref().is_some_and(|s| s.to.is_some())
     }
 
+    /// A break timer runs (on the "Breaks" task, e.g. started from the web page's Break button).
+    /// Being away is the point of a break, so idle and sleep never stop it; the evening
+    /// "still running" reminder catches a forgotten one.
+    fn on_break(&self) -> bool {
+        self.timer.as_ref().is_some_and(|t| tracker::is_break_task(&t.task.subject))
+    }
+
     /// Feed an idle event. Returns true when the "were you working?" question is due.
     pub async fn on_idle_event(&mut self, ev: &IdleEvent) -> Result<bool, String> {
         match ev {
+            IdleEvent::Idle { .. } if self.on_break() => Ok(false),
             IdleEvent::Idle { since } => {
                 let Some(s) = self.session.as_mut() else { return Ok(false) };
                 let from = s.on_idle(*since);
@@ -654,10 +662,11 @@ impl Core {
     /// Returns true when the "were you working?" question is due.
     pub async fn tick(&mut self, now: DateTime<Utc>) -> Result<bool, String> {
         let min = self.idle_threshold();
+        let on_break = self.on_break();
         let Some(s) = self.session.as_mut() else {
             return Ok(false);
         };
-        if let Some(from) = s.heartbeat(now, min) {
+        if let Some(from) = s.heartbeat(now, min).filter(|_| !on_break) {
             s.idle_since = Some(from);
             return self.come_back(now).await;
         }

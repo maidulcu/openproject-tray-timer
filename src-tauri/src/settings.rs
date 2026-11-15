@@ -14,7 +14,7 @@ pub struct Settings {
     pub server_url: String,
     /// Minutes without mouse/keyboard input before the timer stops (at most `MAX_IDLE_MINUTES`).
     pub idle_minutes: u32,
-    /// Work hours, local time, Monday to Friday ("09:00", "18:00").
+    /// Work hours, local time, Monday to Friday ("09:00", "17:00": the office day).
     pub work_start: String,
     pub work_end: String,
     /// Remind me when I use the computer during work hours with no timer running, and when a
@@ -32,7 +32,7 @@ impl Default for Settings {
             server_url: String::new(),
             idle_minutes: MAX_IDLE_MINUTES,
             work_start: "09:00".into(),
-            work_end: "18:00".into(),
+            work_end: "17:00".into(),
             reminders: true,
             start_at_login: true,
         }
