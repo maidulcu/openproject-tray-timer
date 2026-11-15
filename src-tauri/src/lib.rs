@@ -278,9 +278,8 @@ fn build_menu(app: &AppHandle, snap: &Snapshot) -> tauri::Result<Menu<tauri::Wry
         menu.append(&MenuItem::with_id(app, "away", text, true, None::<&str>)?)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    if snap.timer.is_some() {
+    if let Some(t) = &snap.timer {
         menu.append(&MenuItem::with_id(app, "stop", "Stop timer", true, None::<&str>)?)?;
-        let t = snap.timer.as_ref().unwrap();
         if let Some(u) = t.meeting_until {
             let text = format!("End meeting / call mode (on until {})", u.with_timezone(&chrono::Local).format("%H:%M"));
             menu.append(&MenuItem::with_id(app, "meeting-off", text, true, None::<&str>)?)?;

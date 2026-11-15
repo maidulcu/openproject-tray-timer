@@ -850,10 +850,10 @@ mod tests {
     #[test]
     fn fit_until_from_length_refusals() {
         let entry = "This timer has 8.4 hours; one entry can be at most 7 hours. Lower the hours to 7 or less to stop it, and ask an administrator to add the rest.".to_string();
-        assert_eq!(fit_until(&[entry.clone()], t(3, 0), t(11, 24)), Some(t(10, 0)));
+        assert_eq!(fit_until(std::slice::from_ref(&entry), t(3, 0), t(11, 24)), Some(t(10, 0)));
         // Day limit: 1.5 h over, less 3 minutes for rounding.
         let day = "That makes 11.5 hours on 2026-11-16; the limit is 10 hours a day. Ask an administrator if this is right.".to_string();
-        assert_eq!(fit_until(&[day.clone()], t(3, 0), t(9, 0)), Some(t(7, 27)));
+        assert_eq!(fit_until(std::slice::from_ref(&day), t(3, 0), t(9, 0)), Some(t(7, 27)));
         // Both: the earlier one.
         assert_eq!(fit_until(&[entry, day], t(3, 0), t(11, 24)), Some(t(9, 51)));
         // Not about length, or nothing fits after the start: no offer.
