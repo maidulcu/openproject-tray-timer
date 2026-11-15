@@ -132,6 +132,24 @@ pub struct Client {
 }
 
 /// ISO 8601 duration in whole minutes, as OpenProject expects for `hours` (e.g. `PT1H7M`).
+/// Header with the share of the entry's time that had keyboard or mouse input (0-100). Servers
+/// that know it (for example with a plugin) store it in an admin-only field; others ignore it.
+pub const ACTIVITY_HEADER: &str = "X-Timer-Activity";
+
+/// Header with the minutes of the entry spent in meeting / call mode (no idle stop).
+pub const MEETING_HEADER: &str = "X-Timer-Meeting";
+
+fn with_activity(req: reqwest::RequestBuilder, activity: Option<u8>, meeting: Option<u32>) -> reqwest::RequestBuilder {
+    let req = match activity {
+        Some(a) => req.header(ACTIVITY_HEADER, a.min(100).to_string()),
+        None => req,
+    };
+    match meeting {
+        Some(m) => req.header(MEETING_HEADER, m.to_string()),
+        None => req,
+    }
+}
+
 pub fn iso_minutes(minutes: i64) -> String {
     let m = minutes.max(0);
     match (m / 60, m % 60) {
@@ -468,15 +486,14 @@ impl Client {
         parse_time_entry(&v)
     }
 
-    pub async fn stop_timer(&self, entry_id: u64, minutes: i64, comment: &str) -> Result<TimeEntry> {
+    pub async fn stop_timer(&self, entry_id: u64, minutes: i64, comment: &str, activity: Option<u8>, meeting: Option<u32>) -> Result<TimeEntry> {
         let body = json!({
             "ongoing": false,
             "hours": iso_minutes(minutes),
             "comment": {"raw": comment}
         });
-        let v = self
-            .send(self.http.patch(self.url(&format!("/time_entries/{entry_id}"))).json(&body))
-            .await?;
+        let req = self.http.patch(self.url(&format!("/time_entries/{entry_id}"))).json(&body);
+        let v = self.send(with_activity(req, activity, meeting)).await?;
         parse_time_entry(&v)
     }
 
@@ -487,6 +504,8 @@ impl Client {
         spent_on: NaiveDate,
         minutes: i64,
         comment: &str,
+        activity: Option<u8>,
+        meeting: Option<u32>,
     ) -> Result<TimeEntry> {
         let body = json!({
             "spentOn": spent_on.to_string(),
@@ -494,7 +513,7 @@ impl Client {
             "comment": {"raw": comment},
             "_links": {"entity": {"href": wp_href(task_id)}}
         });
-        let v = self.send(self.http.post(self.url("/time_entries")).json(&body)).await?;
+        let v = self.send(with_activity(self.http.post(self.url("/time_entries")).json(&body), activity, meeting)).await?;
         parse_time_entry(&v)
     }
 

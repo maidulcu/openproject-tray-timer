@@ -57,11 +57,48 @@ pub struct StopProblem {
     pub messages: Vec<String>,
     /// Stop at this time (where input stopped) rather than when the user retries.
     pub until: Option<DateTime<Utc>>,
+    /// The latest end time the server's length limits allow (one entry, one day), when the
+    /// refusal was about length. Offered as a one-click "End at".
+    #[serde(default)]
+    pub fit_until: Option<DateTime<Utc>>,
 }
 
 /// The server's reasons ask for a reason on the task (it is over its estimate).
 pub fn needs_reason(messages: &[String]) -> bool {
     messages.iter().any(|m| m.to_lowercase().contains("estimate"))
+}
+
+/// Meeting / call mode lasts at most this long, then idle stops work again.
+pub const MEETING_MINUTES: i64 = 120;
+
+/// The first number after `after` in `text` ("at most 7 hours" -> 7.0).
+fn number_after(text: &str, after: &str) -> Option<f64> {
+    let rest = &text[text.find(after)? + after.len()..];
+    let num: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    num.trim_end_matches('.').parse().ok()
+}
+
+/// From the server's length refusals, the latest end time that fits: "one entry can be at most
+/// 7 hours" (from the start) and "That makes 11.2 hours on <day>; the limit is 10 hours a day"
+/// (from `until`, with 3 minutes to spare for the server's rounding). `None` when no message
+/// is about length or nothing fits after the start.
+pub fn fit_until(messages: &[String], started: DateTime<Utc>, until: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let mut best: Option<DateTime<Utc>> = None;
+    for m in messages {
+        let lower = m.to_lowercase();
+        let end = if let Some(max) = number_after(&lower, "can be at most") {
+            Some(started + Duration::minutes((max * 60.0) as i64))
+        } else if let (Some(total), Some(limit)) = (number_after(&lower, "that makes"), number_after(&lower, "the limit is")) {
+            let over = ((total - limit) * 3600.0).ceil() as i64 + 180;
+            Some(until - Duration::seconds(over.max(0)))
+        } else {
+            None
+        };
+        if let Some(e) = end {
+            best = Some(best.map_or(e, |b| b.min(e)));
+        }
+    }
+    best.filter(|e| *e > started && *e < until).map(|e| e - Duration::seconds(e.timestamp() % 60))
 }
 
 impl StopProblem {
@@ -269,8 +306,8 @@ impl Core {
                 c.comment_on_task(task.id, text).await?;
                 return Ok(None);
             }
-            Action::Stop { entry_id, minutes, comment, .. } => c.stop_timer(*entry_id, *minutes, comment).await?,
-            Action::Log { task, day, minutes, comment } => c.log_time(task.id, *day, *minutes, comment).await?,
+            Action::Stop { entry_id, minutes, comment, activity, meeting, .. } => c.stop_timer(*entry_id, *minutes, comment, *activity, *meeting).await?,
+            Action::Log { task, day, minutes, comment, activity, meeting } => c.log_time(task.id, *day, *minutes, comment, *activity, *meeting).await?,
         };
         self.offline = false;
         Ok(Some(e))
@@ -538,9 +575,11 @@ impl Core {
         let away_from = session.idle_since;
         let minutes = session.worked_minutes(until);
         let day = local_day(session.started_at);
+        let activity = session.activity(until).filter(|_| !tracker::is_break_task(&timer.task.subject));
+        let meeting = session.meeting_minutes(until);
 
         // Started offline and never sent: it goes up as one finished entry.
-        if timer.id == PENDING && queue::fold_offline_timer(&mut self.queue, &timer.task, &comment, minutes, day) {
+        if timer.id == PENDING && queue::fold_offline_timer(&mut self.queue, &timer.task, &comment, minutes, day, activity, meeting) {
             if let Some(text) = reason {
                 let i = self.queue.iter().position(|a| matches!(a, Action::Log { .. })).unwrap_or(0);
                 self.queue.insert(i, Action::TaskComment { task: timer.task.clone(), text });
@@ -551,7 +590,7 @@ impl Core {
         if let Some(text) = reason {
             self.submit(Action::TaskComment { task: timer.task.clone(), text }).await.map_err(|e| e.to_string())?;
         }
-        let stop = Action::Stop { entry_id: timer.id, task: timer.task.clone(), minutes, comment: comment.clone(), at: until };
+        let stop = Action::Stop { entry_id: timer.id, task: timer.task.clone(), minutes, comment: comment.clone(), at: until, activity, meeting };
         match self.submit(stop).await {
             Ok(_) => {
                 self.finish_stop(timer.task, comment, away_from);
@@ -573,7 +612,8 @@ impl Core {
     }
 
     fn refused(&mut self, messages: Vec<String>, until: DateTime<Utc>, keep_until: bool) -> Stop {
-        self.stop_problem = Some(StopProblem { messages: messages.clone(), until: keep_until.then_some(until) });
+        let fit = self.session.as_ref().and_then(|s| fit_until(&messages, s.started_at, until));
+        self.stop_problem = Some(StopProblem { messages: messages.clone(), until: keep_until.then_some(until), fit_until: fit });
         self.save();
         Stop::Refused(messages)
     }
@@ -646,7 +686,7 @@ impl Core {
     /// Feed an idle event. Returns true when the "were you working?" question is due.
     pub async fn on_idle_event(&mut self, ev: &IdleEvent) -> Result<bool, String> {
         match ev {
-            IdleEvent::Idle { .. } if self.on_break() => Ok(false),
+            IdleEvent::Idle { .. } if self.on_break() || self.in_meeting(crate::api::now()) => Ok(false),
             IdleEvent::Idle { since } => {
                 let Some(s) = self.session.as_mut() else { return Ok(false) };
                 let from = s.on_idle(*since);
@@ -656,6 +696,64 @@ impl Core {
             IdleEvent::Active { at } => self.come_back(*at).await,
             IdleEvent::Unavailable(_) => Ok(false),
         }
+    }
+
+    /// An activity sample for the running timer (`idle_secs` since the last input). Not saved
+    /// here: `tick` saves right after.
+    pub fn sample_activity(&mut self, now: DateTime<Utc>, idle_secs: u64, step: i64) {
+        if self.on_break() {
+            return;
+        }
+        if let Some(s) = self.session.as_mut().filter(|s| s.idle_since.is_none()) {
+            if s.in_meeting(now) {
+                s.sample_meeting(now, step);
+            } else {
+                s.sample(now, idle_secs, step);
+            }
+        }
+    }
+
+    /// Meeting / call mode is on for the running timer.
+    pub fn in_meeting(&self, now: DateTime<Utc>) -> bool {
+        self.timer.is_some() && self.session.as_ref().is_some_and(|s| s.in_meeting(now))
+    }
+
+    /// Turn meeting / call mode on or off for the running timer. While on (at most
+    /// `MEETING_MINUTES`), being away from the keyboard doesn't stop the timer and the time is
+    /// left out of the activity figure. Not on breaks (they never stop anyway).
+    pub fn set_meeting(&mut self, on: bool, now: DateTime<Utc>) -> Result<(), String> {
+        if self.timer.is_none() {
+            return Err("No timer is running.".into());
+        }
+        if on && self.on_break() {
+            return Err("A break never stops for being away; meeting mode isn't needed.".into());
+        }
+        let s = self.session.as_mut().ok_or("No timer is running.")?;
+        if on {
+            s.start_meeting(now, MEETING_MINUTES);
+        } else {
+            s.end_meeting(now);
+        }
+        self.save();
+        Ok(())
+    }
+
+    /// Meeting mode ran out: end it. If there has been no input for the idle limit, stop the
+    /// timer as if the user went idle then (not before the meeting mode ended). `idle_secs`:
+    /// seconds since the last input, if known. Returns true when meeting mode just ended.
+    pub async fn end_meeting_if_due(&mut self, now: DateTime<Utc>, idle_secs: Option<u64>) -> Result<bool, String> {
+        let Some(until) = self.session.as_ref().and_then(|s| s.meeting_until).filter(|u| now >= *u) else {
+            return Ok(false);
+        };
+        if let Some(s) = self.session.as_mut() {
+            s.end_meeting(until);
+        }
+        self.save();
+        if let Some(idle) = idle_secs.map(|i| i as i64).filter(|i| *i >= self.idle_threshold_secs.max(1)) {
+            let since = (now - Duration::seconds(idle)).max(until);
+            self.on_idle_event(&IdleEvent::Idle { since }).await?;
+        }
+        Ok(true)
     }
 
     /// Every 30 s: notices sleep / app-restart gaps and retries a stop that failed.
@@ -695,7 +793,7 @@ impl Core {
             "" => "Break".to_string(),
             n => n.to_string(),
         };
-        let log = Action::Log { task, day: local_day(st.from), minutes: minutes.max(1), comment: note };
+        let log = Action::Log { task, day: local_day(st.from), minutes: minutes.max(1), comment: note, activity: None, meeting: None };
         self.submit(log).await.map_err(|e| e.to_string())?;
         self.idle_stop = None;
         self.save();
@@ -726,7 +824,7 @@ impl Core {
                     let text = require_text(&reason, "The reason")?;
                     self.submit(Action::TaskComment { task: task.clone(), text }).await.map_err(|e| e.to_string())?;
                 }
-                let log = Action::Log { task, day: local_day(st.from), minutes: minutes.max(1), comment };
+                let log = Action::Log { task, day: local_day(st.from), minutes: minutes.max(1), comment, activity: None, meeting: None };
                 self.submit(log).await.map_err(|e| e.to_string())?
             }
             None => None,
@@ -737,5 +835,30 @@ impl Core {
             self.start(st.task.id, &comment).await?;
         }
         Ok(logged)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn t(h: u32, m: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 16, h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn fit_until_from_length_refusals() {
+        let entry = "This timer has 8.4 hours; one entry can be at most 7 hours. Lower the hours to 7 or less to stop it, and ask an administrator to add the rest.".to_string();
+        assert_eq!(fit_until(&[entry.clone()], t(3, 0), t(11, 24)), Some(t(10, 0)));
+        // Day limit: 1.5 h over, less 3 minutes for rounding.
+        let day = "That makes 11.5 hours on 2026-11-16; the limit is 10 hours a day. Ask an administrator if this is right.".to_string();
+        assert_eq!(fit_until(&[day.clone()], t(3, 0), t(9, 0)), Some(t(7, 27)));
+        // Both: the earlier one.
+        assert_eq!(fit_until(&[entry, day], t(3, 0), t(11, 24)), Some(t(9, 51)));
+        // Not about length, or nothing fits after the start: no offer.
+        assert_eq!(fit_until(&["Time on General work needs a short note".into()], t(3, 0), t(9, 0)), None);
+        let big = "That makes 19 hours on 2026-11-16; the limit is 10 hours a day.".to_string();
+        assert_eq!(fit_until(&[big], t(3, 0), t(9, 0)), None);
     }
 }

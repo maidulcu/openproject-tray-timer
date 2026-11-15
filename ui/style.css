@@ -124,3 +124,11 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); }
 .choices button .sub { font-size: 12px; color: var(--muted); font-weight: 400; }
 .choices button:hover { border-color: var(--accent); }
 #away-form[hidden] { display: none; }
+
+/* Resume: the last task, one click */
+.resume { border-color: var(--accent); }
+.resume .row { align-items: center; }
+#resume-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#meeting-box.meeting-on { background: rgba(20, 184, 166, 0.12); background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 6px; padding: 4px 8px; }
+#meeting-box.meeting-on #meeting-text { color: inherit; }
+#fit-box { flex-wrap: wrap; }

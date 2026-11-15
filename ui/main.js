@@ -174,6 +174,33 @@ function render() {
     $("#task-hours").textContent = txt;
     $("#task-hours").classList.toggle("warn", !!(h && h.estimate && h.spent > h.estimate));
     $("#btn-open-task").hidden = !t.task.id;
+    $("#activity").hidden = t.activity == null;
+    if (t.activity != null) {
+      $("#activity").textContent = `Activity: ${t.activity}% (share of this timer with keyboard or mouse input)`;
+    }
+    // Meeting / call mode: no idle stop for up to 2 hours.
+    const isBreak = t.task.subject.trim().toLowerCase() === "breaks";
+    $("#meeting-box").hidden = isBreak;
+    $("#meeting-box").classList.toggle("meeting-on", !!t.meeting_until);
+    if (t.meeting_until) {
+      const until = onScreen(t.meeting_until).toTimeString().slice(0, 5);
+      $("#meeting-text").textContent = `Meeting / call mode until ${until}: the timer keeps running while you're away from the keyboard.`;
+      $("#btn-meeting").textContent = "End meeting mode";
+    } else {
+      $("#meeting-text").textContent = "In a meeting or on a call?";
+      $("#btn-meeting").textContent = "Don't stop while I'm away (2 h)";
+    }
+  }
+
+  // Resume: the last task, one click, with its last note.
+  const last = !t && state.configured && !pickedTask && !$("#search").value ? (state.recent || [])[0] : null;
+  $("#resume").hidden = !last;
+  if (last) {
+    $("#resume-title").textContent = taskLabel(last.task);
+    const noteOk = !noteRequired(last.task) || last.comment.trim().length > 0;
+    $("#resume-note").textContent = last.comment ? "Note: " + last.comment : "No note";
+    $("#btn-resume").textContent = noteOk ? "Resume timer" : "Resume (add a note)…";
+    $("#btn-resume").dataset.ready = noteOk ? "1" : "";
   }
 
   // Today
@@ -209,6 +236,10 @@ function render() {
     $("#reason-box").hidden = !p.needs_reason;
     if (p.until && !$("#stop-until").value && document.activeElement !== $("#stop-until")) {
       $("#stop-until").value = onScreen(p.until).toTimeString().slice(0, 5);
+    }
+    $("#fit-box").hidden = !p.fit_until;
+    if (p.fit_until) {
+      $("#btn-fit").textContent = "Stop at " + onScreen(p.fit_until).toTimeString().slice(0, 5) + " (the most allowed)";
     }
     $("#btn-stop").textContent = "Try stopping again";
   } else {
@@ -416,6 +447,11 @@ async function stopAct(cmd, args, after) {
   } catch (_) { /* shown */ }
 }
 $("#btn-stop").onclick = () => stopAct("stop_timer", { input: stopInput() }, () => invoke("hide_window"));
+$("#btn-fit").onclick = () => {
+  const until = state?.stop_problem?.fit_until;
+  if (until) stopAct("stop_timer", { input: { ...stopInput(), until } }, () => invoke("hide_window"));
+};
+$("#btn-meeting").onclick = () => act("set_meeting", { on: !state?.timer?.meeting_until });
 
 function donePicking() {
   pickedTask = null;
@@ -428,6 +464,17 @@ $("#btn-go").onclick = () => {
   if (state?.timer) stopAct("stop_and_start", { ...args, input: stopInput() }, donePicking);
   else act("start_timer", args, donePicking);
 };
+function resumeTask() {
+  return (state?.recent || [])[0];
+}
+$("#btn-resume").onclick = () => {
+  const r = resumeTask();
+  if (!r) return;
+  if ($("#btn-resume").dataset.ready) act("start_timer", { taskId: r.task.id, comment: r.comment }, donePicking);
+  else pick(r.task);
+};
+$("#btn-resume-edit").onclick = () => { const r = resumeTask(); if (r) pick(r.task); };
+$("#search").addEventListener("input", render);
 $("#btn-retarget").onclick = () => act("retarget_timer", { taskId: pickedTask.id }, donePicking);
 
 function restartComment() {

@@ -22,10 +22,32 @@ pub enum Action {
     Retarget { entry_id: u64, task: Task },
     /// A comment on the task itself (why it needs more time than estimated).
     TaskComment { task: Task, text: String },
-    /// Stop a running timer with these hours and note (stopped at `at`).
-    Stop { entry_id: u64, task: Task, minutes: i64, comment: String, at: DateTime<Utc> },
+    /// Stop a running timer with these hours and note (stopped at `at`). `activity`: the share
+    /// of the time with keyboard or mouse input (0-100), when the app measured it.
+    Stop {
+        entry_id: u64,
+        task: Task,
+        minutes: i64,
+        comment: String,
+        at: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activity: Option<u8>,
+        /// Minutes of it in meeting / call mode (no idle stop), when there were any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meeting: Option<u32>,
+    },
     /// A finished entry: a timer that ran entirely offline, or an away period that was work.
-    Log { task: Task, day: NaiveDate, minutes: i64, comment: String },
+    Log {
+        task: Task,
+        day: NaiveDate,
+        minutes: i64,
+        comment: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activity: Option<u8>,
+        /// Minutes of it in meeting / call mode (no idle stop), when there were any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meeting: Option<u32>,
+    },
 }
 
 impl Action {
@@ -108,12 +130,20 @@ pub struct Refusal {
 
 /// The offline timer was stopped before its `Start` was sent: replace everything queued for it
 /// with one finished entry (`Log`). Returns false if its `Start` was already sent.
-pub fn fold_offline_timer(queue: &mut Vec<Action>, task: &Task, comment: &str, minutes: i64, day: NaiveDate) -> bool {
+pub fn fold_offline_timer(
+    queue: &mut Vec<Action>,
+    task: &Task,
+    comment: &str,
+    minutes: i64,
+    day: NaiveDate,
+    activity: Option<u8>,
+    meeting: Option<u32>,
+) -> bool {
     let Some(i) = queue.iter().position(|a| matches!(a, Action::Start { .. })) else {
         return false;
     };
     queue.retain(|a| !matches!(a, Action::Start { .. }) && a.entry_id() != Some(PENDING));
-    let log = Action::Log { task: task.clone(), day, minutes, comment: comment.trim().to_string() };
+    let log = Action::Log { task: task.clone(), day, minutes, comment: comment.trim().to_string(), activity, meeting };
     queue.insert(i.min(queue.len()), log);
     true
 }
@@ -150,21 +180,21 @@ mod tests {
     #[test]
     fn offline_start_then_stop_becomes_one_log() {
         let mut q = vec![
-            Action::Stop { entry_id: 5, task: task(3), minutes: 30, comment: "a".into(), at: at() },
+            Action::Stop { entry_id: 5, task: task(3), minutes: 30, comment: "a".into(), at: at(), activity: None, meeting: None },
             Action::Start { task: task(1), comment: "x".into(), at: at() },
             Action::Comment { entry_id: PENDING, comment: "y".into() },
             Action::Retarget { entry_id: PENDING, task: task(2) },
         ];
-        assert!(fold_offline_timer(&mut q, &task(2), "y", 45, day()));
+        assert!(fold_offline_timer(&mut q, &task(2), "y", 45, day(), Some(80), None));
         assert_eq!(q.len(), 2);
         assert!(matches!(&q[0], Action::Stop { entry_id: 5, .. }));
-        assert_eq!(q[1], Action::Log { task: task(2), day: day(), minutes: 45, comment: "y".into() });
+        assert_eq!(q[1], Action::Log { task: task(2), day: day(), minutes: 45, comment: "y".into(), activity: Some(80), meeting: None });
     }
 
     #[test]
     fn fold_needs_a_queued_start() {
         let mut q = vec![Action::Comment { entry_id: 7, comment: "y".into() }];
-        assert!(!fold_offline_timer(&mut q, &task(1), "y", 10, day()));
+        assert!(!fold_offline_timer(&mut q, &task(1), "y", 10, day(), None, None));
         assert_eq!(q.len(), 1);
     }
 
@@ -172,8 +202,8 @@ mod tests {
     fn pending_actions_get_the_real_id() {
         let mut q = vec![
             Action::Comment { entry_id: PENDING, comment: "y".into() },
-            Action::Stop { entry_id: PENDING, task: task(1), minutes: 3, comment: "y".into(), at: at() },
-            Action::Stop { entry_id: 9, task: task(1), minutes: 3, comment: "y".into(), at: at() },
+            Action::Stop { entry_id: PENDING, task: task(1), minutes: 3, comment: "y".into(), at: at(), activity: None, meeting: None },
+            Action::Stop { entry_id: 9, task: task(1), minutes: 3, comment: "y".into(), at: at(), activity: None, meeting: None },
         ];
         resolve_pending(&mut q, 42);
         assert!(matches!(q[0], Action::Comment { entry_id: 42, .. }));
@@ -183,7 +213,7 @@ mod tests {
 
     #[test]
     fn notes_can_be_fixed() {
-        let mut a = Action::Log { task: task(1), day: day(), minutes: 5, comment: "Jonas did it".into() };
+        let mut a = Action::Log { task: task(1), day: day(), minutes: 5, comment: "Jonas did it".into(), activity: None, meeting: None };
         a.set_note(" Fixed it ");
         assert_eq!(a.note(), Some("Fixed it"));
         assert_eq!(a.describe(), "Log 0:05 on #1 T1");

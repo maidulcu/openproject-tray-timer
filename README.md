@@ -38,6 +38,12 @@ Built with Tauri 2 (Rust) and a plain HTML/JS window. License: MIT.
   back it asks what that time was: a break, nothing to record, or work away from the keyboard
   (a meeting or call), which is added as its own entry on a task you pick. It also offers to
   restart the timer.
+- **Meeting / call mode**: *Don't stop while I'm away (2 h)* on the running timer (and in the
+  tray). While it's on, no input doesn't stop the timer; it switches itself off after 2 hours.
+- **Resume**: with no timer running, the window opens on the last task and its note, and the tray
+  menu starts with *▶ Resume*: one click continues.
+- **Activity**: the share of the timer's time with keyboard or mouse input ("Activity: 87%"),
+  shown on the timer and sent with the stop (see [What it records](#what-it-records-and-what-it-doesnt)).
 - **Reminders** (Monday to Friday, work hours in Settings, can be turned off): a notification
   when you work for 10 minutes with no timer running, and every hour after work hours while a
   timer still runs.
@@ -45,11 +51,14 @@ Built with Tauri 2 (Rust) and a plain HTML/JS window. License: MIT.
 - **Offline**: when the server can't be reached the timer keeps working. Changes wait in a queue
   with their real times and are sent in order once the server answers.
 - **Refused stops**: if the server refuses an entry (HTTP 422), the timer keeps running and the
-  window shows the server's reasons so you can fix the note or end time and try again.
+  window shows the server's reasons so you can fix the note or end time and try again. When the
+  reasons are about length (an entry or a day over a limit), it offers *Stop at HH:MM (the most
+  allowed)* in one click.
 - **Adopt**: a timer started in the web UI or on another computer is picked up, and one stopped
   elsewhere is noticed.
-- **Updates**: installed apps check your update server and offer to install new versions from the
-  tray (see [Your own updates](#your-own-updates)).
+- **Updates**: installed apps check your update server a minute after starting and then every
+  hour (also right after waking from sleep), and offer to install new versions from the tray and
+  a banner in the window (see [Your own updates](#your-own-updates)).
 - Starts at login (can be turned off). Only one copy runs. *Quit* leaves a running timer running
   in OpenProject.
 
@@ -79,6 +88,11 @@ If you roll this out to a team, give them this section.
   seconds (to notice sleep), changes waiting to be sent while offline, recent tasks and their
   last notes, and a request log (`requests.log`: time, method, address and status code only,
   never notes, hours or the key, kept under 1 MB).
+- **Activity**: every 30 seconds while a timer runs, whether there was any input in those 30
+  seconds. The share is shown on the timer and sent with the stop as the `X-Timer-Activity`
+  header (0-100). Time in meeting / call mode is left out of it, and its minutes are sent as
+  `X-Timer-Meeting`. Breaks aren't measured. Stock OpenProject ignores both headers; a server
+  plugin can store them for administrators.
 - **Never recorded:** keystrokes, screenshots, window titles, which apps or websites you use,
   mouse positions.
 - **Sent to OpenProject:** only time entries (task, date, hours, note) and task comments you write.

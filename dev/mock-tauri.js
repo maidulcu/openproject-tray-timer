@@ -12,7 +12,7 @@
     settings: { server_url: "http://localhost:8080", idle_minutes: 10, work_start: "09:00", work_end: "17:00", reminders: true, start_at_login: true },
     user: { id: 11, name: "Timer Test" }, timer: null, idle_stop: null, stop_problem: null,
     offline: false, waiting: [], refusal: null,
-    break_available: true, version: "0.4.7",
+    break_available: true, version: "0.5.2",
     today: [
       { id: 501, task: { id: 1667, subject: "Design tray menu", project: "Timer app test" }, hours: 1.5, comment: "Tray layout" },
       { id: 502, task: { id: 1791, subject: "Breaks", project: "Internal" }, hours: 0.25, comment: "Tea" },
@@ -28,7 +28,7 @@
   const start = (id, c) => {
     const task = tasks.find((t) => t.id === id);
     s.timer = { entry_id: 900 + log.length, task, comment: c.trim(), started_at: new Date(Date.now() - 42 * 60000).toISOString(),
-      worked_secs: 42 * 60, idle_now: false };
+      worked_secs: 42 * 60, idle_now: false, activity: 87, meeting_until: null };
     remember(task, c.trim());
     s.task_hours = { task_id: id, spent: 5.5, estimate: 8 };
     s.today_secs = 5400 + 42 * 60;
@@ -36,18 +36,20 @@
   };
   const cmds = {
     get_state: () => snap(),
-    check_for_updates: () => new Promise((r) => setTimeout(() => r("You have the latest version (0.4.7)."), 600)),
+    check_for_updates: () => new Promise((r) => setTimeout(() => r("You have the latest version (0.5.2)."), 600)),
     take_view: () => "timer",
     take_pick: () => null,
     hide_window: () => null,
     search_tasks: ({ text }) => tasks.filter((t) => text ? `${t.id} ${t.subject}`.toLowerCase().includes(text.toLowerCase()) : t.id < 1700),
     start_timer: ({ taskId, comment: c }) => { if (s.timer) throw "A timer is already running"; start(taskId, c); },
     retarget_timer: ({ taskId }) => { s.timer.task = tasks.find((t) => t.id === taskId); },
+    set_meeting: ({ on }) => { s.timer.meeting_until = on ? new Date(Date.now() + 120 * 60000).toISOString() : null; },
     set_comment: ({ comment: c }) => { s.timer.comment = c.trim(); remember(s.timer.task, c.trim()); },
     stop_timer: ({ input }) => {
       if (input?.comment != null) s.timer.comment = input.comment.trim();
       if (refuse && !(input?.reason && refuse.reason)) {
-        s.stop_problem = { messages: refuse.messages, needs_reason: refuse.reason, until: null };
+        const fit = refuse.messages.some((m) => /at most \d+ hours/.test(m)) ? new Date(Date.now() - 95 * 60000).toISOString() : null;
+        s.stop_problem = { messages: refuse.messages, needs_reason: refuse.reason, until: null, fit_until: fit };
         return false;
       }
       refuse = null; s.stop_problem = null; s.timer = null; return true;

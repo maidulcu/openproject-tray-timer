@@ -1,7 +1,7 @@
 {
   "name": "dwl-timer",
   "private": true,
-  "version": "0.4.7",
+  "version": "0.5.2",
   "description": "Tray timer for OpenProject with idle detection",
   "license": "MIT",
   "author": "Maidul Islam",

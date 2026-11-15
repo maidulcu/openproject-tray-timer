@@ -140,7 +140,7 @@ async fn full_day_flow() {
     // A timer stopped in the web UI is noticed on refresh.
     core.start(a.id, "Last task").await.unwrap();
     let fifth = core.timer.as_ref().unwrap().id;
-    c.stop_timer(fifth, 2, "stopped elsewhere").await.unwrap();
+    c.stop_timer(fifth, 2, "stopped elsewhere", None, None).await.unwrap();
     core.refresh().await.unwrap();
     assert!(core.timer.is_none());
 }
@@ -351,7 +351,7 @@ async fn stopped_elsewhere() {
     // Stopped in the browser, then "Stop" in the app before its next refresh.
     core.start(task.id, "Web stop").await.unwrap();
     let id = core.timer.as_ref().unwrap().id;
-    c.stop_timer(id, 7, "Web stop").await.unwrap();
+    c.stop_timer(id, 7, "Web stop", None, None).await.unwrap();
     let err = core.stop(Utc::now(), StopInput::default()).await.unwrap_err();
     assert!(err.contains("already stopped"), "{err}");
     assert!(core.timer.is_none());
@@ -359,7 +359,7 @@ async fn stopped_elsewhere() {
     // Same for a note edit.
     core.start(task.id, "Second").await.unwrap();
     let id2 = core.timer.as_ref().unwrap().id;
-    c.stop_timer(id2, 3, "Second").await.unwrap();
+    c.stop_timer(id2, 3, "Second", None, None).await.unwrap();
     assert!(core.set_comment("Changed").await.unwrap_err().contains("already stopped"));
 
     // A stop queued offline for a timer that is stopped elsewhere meanwhile: dropped, no refusal.
@@ -368,10 +368,94 @@ async fn stopped_elsewhere() {
     core.client = Some(dead_client());
     core.offline = true;
     assert!(matches!(core.stop(Utc::now(), StopInput::default()).await.unwrap(), Stop::Done));
-    c.stop_timer(id3, 4, "Third").await.unwrap();
+    c.stop_timer(id3, 4, "Third", None, None).await.unwrap();
     core.client = Some(c.clone());
     core.refresh().await.unwrap();
     assert!(core.queue.is_empty() && core.refusal.is_none(), "dropped, not refused");
     assert!(core.notice.as_deref().unwrap_or("").contains("already stopped"));
     assert_eq!(stored(&c, id3).await.0, "PT4M");
+}
+
+/// Activity: measured in 30-second steps while the timer runs and sent with the stop. On a
+/// server that stores it (e.g. via a plugin) it lands in an admin-only field (check it there: the
+/// test user can't read it). Prints the entry id.
+#[tokio::test]
+#[ignore]
+async fn activity_sent_on_stop() {
+    let c = client();
+    clean(&c).await;
+    let task = c.search_tasks("").await.unwrap().into_iter()
+        .find(|t| !t.subject.contains("General work") && !t.subject.contains("Tiny") && t.subject != "Breaks")
+        .unwrap();
+    let mut core = Core::new(None, 10 * 60);
+    core.connect(c.clone()).await.unwrap();
+    core.start(task.id, "Activity check").await.unwrap();
+    let id = core.timer.as_ref().unwrap().id;
+    let start = core.session.as_ref().unwrap().started_at;
+    let s = |n: i64| start + Duration::seconds(n * 30);
+    // 10 minutes: input in the first 6, none in the last 4 (idle grows, under the idle limit).
+    core.sample_activity(s(0), 0, 30);
+    for i in 1..=20 {
+        let idle = if i <= 12 { 3 } else { (i as u64 - 12) * 30 };
+        core.sample_activity(s(i), idle, 30);
+    }
+    assert_eq!(core.session.as_ref().unwrap().activity(s(20)), Some(60));
+    assert!(matches!(core.stop(s(20), StopInput::default()).await.unwrap(), Stop::Done));
+    println!("activity entry: {id}");
+}
+
+/// Meeting / call mode: an idle signal doesn't stop the timer; the minutes go with the stop
+/// (X-Timer-Meeting) and the meeting time is left out of the activity figure.
+#[tokio::test]
+#[ignore]
+async fn meeting_mode_keeps_timer_and_is_sent() {
+    let c = client();
+    clean(&c).await;
+    let task = c.search_tasks("").await.unwrap().into_iter()
+        .find(|t| !t.subject.contains("General work") && !t.subject.contains("Tiny") && t.subject != "Breaks")
+        .unwrap();
+    let mut core = Core::new(None, 10 * 60);
+    core.connect(c.clone()).await.unwrap();
+    core.start(task.id, "Meeting check").await.unwrap();
+    let id = core.timer.as_ref().unwrap().id;
+    let start = core.session.as_ref().unwrap().started_at;
+    let s = |n: i64| start + Duration::seconds(n * 30);
+    core.sample_activity(s(0), 0, 30);
+    for i in 1..=6 {
+        core.sample_activity(s(i), 2, 30); // 3 min typing
+    }
+    core.set_meeting(true, s(6)).unwrap();
+    assert!(core.in_meeting(s(7)));
+    for i in 7..=40 {
+        core.sample_activity(s(i), (i as u64 - 6) * 30, 30); // 17 min on a call, no input
+    }
+    // The idle watcher fires: ignored while meeting mode is on.
+    core.on_idle_event(&IdleEvent::Idle { since: Utc::now() - Duration::minutes(11) }).await.unwrap();
+    assert!(core.timer.is_some(), "meeting mode must keep the timer running");
+    assert_eq!(core.session.as_ref().unwrap().activity(s(40)), Some(100));
+    assert_eq!(core.session.as_ref().unwrap().meeting_minutes(s(40)), Some(17));
+    assert!(matches!(core.stop(s(40), StopInput::default()).await.unwrap(), Stop::Done));
+    println!("meeting entry: {id}");
+}
+
+/// A stop over the 7-hour limit is refused and offers the latest allowed end time.
+#[tokio::test]
+#[ignore]
+async fn long_stop_offers_allowed_end() {
+    let c = client();
+    clean(&c).await;
+    let task = c.search_tasks("").await.unwrap().into_iter()
+        .find(|t| !t.subject.contains("General work") && !t.subject.contains("Tiny") && t.subject != "Breaks")
+        .unwrap();
+    let mut core = Core::new(None, 10 * 60);
+    core.connect(c.clone()).await.unwrap();
+    core.start(task.id, "Long timer check").await.unwrap();
+    let start = core.session.as_ref().unwrap().started_at;
+    let stop = core.stop(start + Duration::hours(8), StopInput::default()).await.unwrap();
+    assert!(matches!(stop, Stop::Refused(_)), "8 hours must be refused");
+    let p = core.stop_problem.clone().unwrap();
+    println!("refused: {:?}", p.messages);
+    let fit = p.fit_until.expect("a length refusal offers an end time");
+    assert!(fit > start && fit <= start + Duration::hours(7), "fit {fit} for start {start}");
+    clean(&c).await; // the test timer is still running: remove it
 }

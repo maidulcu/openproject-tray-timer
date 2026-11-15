@@ -56,6 +56,10 @@
             (posted as a comment on the task)
             <textarea id="stop-reason" rows="2"></textarea>
           </label>
+          <div id="fit-box" class="row-text" hidden>
+            <button id="btn-fit" class="primary"></button>
+            <span class="hint">The rest isn't logged: if it was work, ask an administrator to add it.</span>
+          </div>
           <label>End at (optional, if you stopped working earlier)
             <input id="stop-until" type="time">
           </label>
@@ -63,6 +67,11 @@
         <div class="row-text">
           <span id="task-hours" class="hint"></span>
           <button id="btn-open-task" class="link">Open in OpenProject</button>
+        </div>
+        <p id="activity" class="hint" hidden></p>
+        <div id="meeting-box" class="row-text">
+          <span id="meeting-text" class="hint"></span>
+          <button id="btn-meeting" class="link"></button>
         </div>
         <label><span id="run-comment-label">Note (optional)</span>
           <textarea id="run-comment" rows="2" data-submit="btn-stop"></textarea>
@@ -73,6 +82,15 @@
         </div>
       </div>
 
+      <div id="resume" class="card resume" hidden>
+        <span class="hint">Continue where you left off</span>
+        <b id="resume-title"></b>
+        <span id="resume-note" class="hint"></span>
+        <div class="row">
+          <button id="btn-resume" class="primary">Resume timer</button>
+          <button id="btn-resume-edit" class="link">Change the note first</button>
+        </div>
+      </div>
       <input id="search" type="search" placeholder="Search tasks (subject or ID)" autocomplete="off">
       <div id="picked" class="card" hidden>
         <div class="picked-title"></div>
@@ -166,6 +184,13 @@
           no timer running, it reads the same "time since last input" every 30 seconds to decide on a
           reminder, and stores nothing. It never records keystrokes, what you type, screenshots,
           window titles or which apps you use.</p>
+        <p>Activity: every 30 seconds while a timer runs, it checks whether there was any mouse or
+          keyboard input in those 30 seconds. The share of the timer's time with input (for example
+          "87%") is shown on the timer and sent with the time entry when it stops; on servers that
+          store it, only administrators see it. Breaks are not measured.</p>
+        <p>Meeting / call mode: for up to 2 hours the timer doesn't stop when there is no input,
+          and that time is left out of the activity figure. How many minutes of the entry were in
+          meeting mode is sent with it (administrators only, on servers that store it).</p>
         <p>OpenProject only receives the time entries you start, stop or add, with your comment.
           The API key is kept in the system keyring, not in a file.</p>
       </details>

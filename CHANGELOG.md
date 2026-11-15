@@ -2,6 +2,35 @@
 
 Versions follow [semantic versioning](https://semver.org/). Dates are release dates.
 
+## 0.5.2 (2026-11-15)
+
+- **Updates are found reliably.** The app checks a minute after it starts and then every hour by
+  the clock, so also right after the computer wakes from sleep. Before, it counted 6 hours of
+  30-second ticks, which don't advance while a laptop sleeps, so an app that was only ever
+  suspended could go days without checking. While an update waits, the "Version x is ready"
+  notification comes back every 3 hours.
+
+## 0.5.1 (2026-11-15)
+
+- **Meeting / call mode**: *Don't stop while I'm away (2 h)* on the running timer and in the tray
+  menu. While it's on, no input doesn't stop the timer, and that time is left out of the activity
+  figure. It ends by itself after 2 hours (with a notification); if there has been no input for
+  the idle limit by then, the timer stops as usual, at the end of meeting mode at the earliest. The
+  minutes go with the stop as the `X-Timer-Meeting` header. Not offered on breaks.
+- **A stop refused for length** (a server message such as "one entry can be at most 7 hours" or
+  "the limit is 10 hours a day") offers *Stop at HH:MM (the most allowed)* in one click.
+
+## 0.5.0 (2026-11-15)
+
+- **Activity**: every 30 seconds while a timer runs, the app checks whether there was keyboard or
+  mouse input in those 30 seconds (only the time since the last input, nothing else). The share of
+  the timer's time with input shows on the timer ("Activity: 87%") and is sent with the stop as the
+  `X-Timer-Activity` header, for servers that store it. Not measured: breaks, sleep gaps, or the
+  first 2 minutes. "What this app records" in Settings says so.
+- **Resume**: with no timer running, the window opens on "Continue where you left off" with the
+  last task and its note: one click starts it ("Change the note first" to edit). The tray menu has
+  "▶ Resume #id task" at the top. A task that needs a note opens the start card instead.
+
 ## 0.4.7 (2026-11-15)
 
 - "Check for updates" in Settings and the tray menu, with the answer in words; a failed check or

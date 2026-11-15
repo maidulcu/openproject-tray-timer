@@ -53,6 +53,8 @@ struct App {
     /// A newer version found by the updater, ready to install.
     update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
     update_version: Mutex<Option<String>>,
+    /// When the "update ready" notification was last shown (repeated every few hours).
+    update_notified: Mutex<Option<DateTime<Utc>>>,
     /// Last tray title and tooltip set.
     tray_text: Mutex<(String, String)>,
     /// Today's finished entries, and the running task's hours against its estimate.
@@ -68,6 +70,10 @@ struct TimerView {
     started_at: DateTime<Utc>,
     worked_secs: i64,
     idle_now: bool,
+    /// Share of this timer's time with keyboard or mouse input, once measured for 2 minutes.
+    activity: Option<u8>,
+    /// Meeting / call mode is on until then (no idle stop).
+    meeting_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
@@ -84,6 +90,8 @@ struct StopProblemView {
     messages: Vec<String>,
     needs_reason: bool,
     until: Option<DateTime<Utc>>,
+    /// The latest end time the length limits allow (offered as one click).
+    fit_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
@@ -157,6 +165,8 @@ async fn snapshot(app: &AppHandle) -> Snapshot {
             started_at: t.started_at,
             worked_secs: s.worked_secs(now),
             idle_now: s.idle_since.is_some(),
+            activity: s.activity(now).filter(|_| !tracker::is_break_task(&t.task.subject)),
+            meeting_until: s.meeting_until.filter(|u| now < *u),
         }),
         _ => None,
     };
@@ -171,6 +181,7 @@ async fn snapshot(app: &AppHandle) -> Snapshot {
         messages: p.messages.clone(),
         needs_reason: p.needs_reason(),
         until: p.until,
+        fit_until: p.fit_until,
     });
     let refusal = core.refusal.as_ref().map(|r| RefusalView {
         action: r.action.describe(),
@@ -179,7 +190,10 @@ async fn snapshot(app: &AppHandle) -> Snapshot {
         messages: r.messages.clone(),
         needs_reason: core::needs_reason(&r.messages),
     });
-    let idle_status = st.idle.lock().unwrap().status.clone();
+    let mut idle_status = st.idle.lock().unwrap().status.clone();
+    if let Some(u) = timer.as_ref().and_then(|t| t.meeting_until) {
+        idle_status = format!("paused: meeting / call mode until {}", u.with_timezone(&chrono::Local).format("%H:%M"));
+    }
     let error = st.last_error.lock().unwrap().clone();
     let update_version = st.update_version.lock().unwrap().clone();
     let today = st.today.lock().unwrap().clone();
@@ -266,12 +280,28 @@ fn build_menu(app: &AppHandle, snap: &Snapshot) -> tauri::Result<Menu<tauri::Wry
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     if snap.timer.is_some() {
         menu.append(&MenuItem::with_id(app, "stop", "Stop timer", true, None::<&str>)?)?;
+        let t = snap.timer.as_ref().unwrap();
+        if let Some(u) = t.meeting_until {
+            let text = format!("End meeting / call mode (on until {})", u.with_timezone(&chrono::Local).format("%H:%M"));
+            menu.append(&MenuItem::with_id(app, "meeting-off", text, true, None::<&str>)?)?;
+        } else if !tracker::is_break_task(&t.task.subject) {
+            let text = "Meeting / call: don't stop while I'm away (2 h)";
+            menu.append(&MenuItem::with_id(app, "meeting-on", text, true, None::<&str>)?)?;
+        }
         menu.append(&MenuItem::with_id(app, "open", "Switch task or edit comment…", true, None::<&str>)?)?;
     } else {
+        // Resume: the last task with its last note, one click.
+        if let Some(r) = snap.recent.first().filter(|_| snap.configured) {
+            let text = format!("▶ Resume #{} {}", r.task.id, short(&r.task.subject, 40));
+            menu.append(&MenuItem::with_id(app, format!("recent:{}", r.task.id), text, true, None::<&str>)?)?;
+        }
         menu.append(&MenuItem::with_id(app, "open", "Start timer…", snap.configured, None::<&str>)?)?;
     }
     let running_id = snap.timer.as_ref().map(|t| t.task.id);
-    let recent: Vec<_> = snap.recent.iter().filter(|r| Some(r.task.id) != running_id).take(TRAY_RECENT).collect();
+    // Without a timer the first recent task is the Resume item above.
+    let skip = usize::from(snap.timer.is_none());
+    let recent: Vec<_> =
+        snap.recent.iter().skip(skip).filter(|r| Some(r.task.id) != running_id).take(TRAY_RECENT).collect();
     if snap.configured && !recent.is_empty() {
         menu.append(&PredefinedMenuItem::separator(app)?)?;
         let head = if snap.timer.is_some() { "Switch to:" } else { "Start on:" };
@@ -447,10 +477,10 @@ async fn open_in_openproject(app: AppHandle, path: String) -> Result<(), String>
     app.opener().open_url(format!("{base}{path}"), None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Ask the update server for a newer version (installed builds only).
 /// Ask the update server for a newer version. `Ok(Some(v))`: version `v` is ready to install;
-/// `Ok(None)`: this is the latest. Runs a minute after start, every 6 hours, and from "Check for
-/// updates" (tray and Settings).
+/// `Ok(None)`: this is the latest. Runs a minute after start, then every hour by the wall clock
+/// (so right after the computer wakes from sleep), and from "Check for updates" (tray and
+/// Settings). While an update waits, the notification is repeated every 3 hours.
 async fn check_update(app: &AppHandle) -> Result<Option<String>, String> {
     if cfg!(debug_assertions) {
         return Err("Update checks are off in development builds.".into());
@@ -463,7 +493,10 @@ async fn check_update(app: &AppHandle) -> Result<Option<String>, String> {
             let v = update.version.clone();
             let first = st.update_version.lock().unwrap().replace(v.clone()).as_deref() != Some(v.as_str());
             *st.update.lock().await = Some(update);
-            if first {
+            let now = Utc::now();
+            let again = st.update_notified.lock().unwrap().is_none_or(|t| now - t >= chrono::Duration::hours(3));
+            if first || again {
+                *st.update_notified.lock().unwrap() = Some(now);
                 notify(app, "DWL timer update", &format!("Version {v} is ready. Install it from the tray menu."));
             }
             publish(app).await;
@@ -633,6 +666,15 @@ async fn retarget_timer(app: AppHandle, task_id: u64) -> Result<(), String> {
     act!(app, |core| core.retarget(task_id))
 }
 
+/// Meeting / call mode on or off for the running timer.
+#[tauri::command]
+async fn set_meeting(app: AppHandle, on: bool) -> Result<(), String> {
+    let res = app.state::<App>().core.lock().await.set_meeting(on, crate::api::now());
+    set_error(&app, res.as_ref().err().cloned());
+    after_change(&app).await;
+    res
+}
+
 #[tauri::command]
 async fn set_comment(app: AppHandle, comment: String) -> Result<(), String> {
     act!(app, |core| core.set_comment(&comment))
@@ -722,6 +764,13 @@ fn on_menu(app: &AppHandle, id: &str) {
         "away" => show_view(app, "away"),
         "settings" => show_view(app, "settings"),
         "quit" => app.exit(0),
+        "meeting-on" | "meeting-off" => {
+            let app = app.clone();
+            let on = id == "meeting-on";
+            tauri::async_runtime::spawn(async move {
+                let _ = set_meeting(app, on).await;
+            });
+        }
         "stop" | "refresh" => {
             let app = app.clone();
             let id = id.to_string();
@@ -830,6 +879,7 @@ fn spawn_tickers(app: AppHandle) {
     });
     tauri::async_runtime::spawn(async move {
         let mut n: u64 = 0;
+        let mut last_update_check: Option<DateTime<Utc>> = None;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(TICK_SECS as u64)).await;
             n += 1;
@@ -857,12 +907,40 @@ fn spawn_tickers(app: AppHandle) {
             if n % 4 == 0 || busy || gap {
                 let _ = refresh(app.clone()).await;
             }
+            // Activity: was there keyboard or mouse input in the last 30 s? (Only the time since
+            // the last input is read, nothing else.) Not after a gap: that's sleep, not work.
+            let sampling = {
+                let core = st.core.lock().await;
+                !gap && core.session.as_ref().is_some_and(|s| s.idle_since.is_none()) && core.timer.is_some()
+            };
+            if sampling {
+                if let Some(idle) = idle::idle_seconds().await {
+                    st.core.lock().await.sample_activity(crate::api::now(), idle, TICK_SECS);
+                }
+            }
+            // Meeting mode ran out: idle stops work again (and stop now if already away).
+            let meeting_due = {
+                let core = st.core.lock().await;
+                core.session.as_ref().and_then(|s| s.meeting_until).is_some_and(|u| crate::api::now() >= u)
+            };
+            if meeting_due {
+                let idle = idle::idle_seconds().await;
+                let res = st.core.lock().await.end_meeting_if_due(crate::api::now(), idle).await;
+                if matches!(res, Ok(true)) {
+                    notify(&app, "Meeting / call mode ended", "The timer stops again when you're away from the keyboard.");
+                }
+                handle_due(&app, res.map(|_| false)).await;
+            }
             // Sleep / restart gaps and stops that failed while offline.
             let res = app.state::<App>().core.lock().await.tick(crate::api::now()).await;
             handle_due(&app, res).await;
             remind(&app).await;
-            // Updates: a minute after start, then every 6 hours.
-            if n == 2 || n % 720 == 0 {
+            // Updates: a minute after start, then hourly by the wall clock. (Counting ticks
+            // missed sleep: a laptop that sleeps instead of shutting down never reached 6 hours
+            // of ticks, so it never checked again.)
+            let now = Utc::now();
+            if n >= 2 && last_update_check.is_none_or(|t| now - t >= chrono::Duration::hours(1)) {
+                last_update_check = Some(now);
                 let _ = check_update(&app).await;
             }
         }
@@ -942,6 +1020,7 @@ pub fn run() {
                 pick: Mutex::new(None),
                 update: tokio::sync::Mutex::new(None),
                 update_version: Mutex::new(None),
+                update_notified: Mutex::new(None),
                 tray_text: Mutex::new(Default::default()),
                 today: Mutex::new(vec![]),
                 task_hours: Mutex::new(None),
@@ -980,6 +1059,7 @@ pub fn run() {
             start_timer,
             retarget_timer,
             set_comment,
+            set_meeting,
             stop_timer,
             stop_and_start,
             resolve_idle_stop,

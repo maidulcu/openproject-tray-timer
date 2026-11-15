@@ -30,11 +30,31 @@ pub struct Session {
     /// later creation time doesn't replace it.
     #[serde(default)]
     pub local_start: bool,
+    /// Activity: seconds with keyboard or mouse input, counted in 30-second steps from
+    /// `sampled_from` (when the app first measured this timer) to `last_sample`.
+    #[serde(default)]
+    pub active_secs: i64,
+    #[serde(default)]
+    pub sampled_from: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_sample: Option<DateTime<Utc>>,
+    /// Meeting / call mode: no idle stop until this time (set by the user, at most 2 hours).
+    #[serde(default)]
+    pub meeting_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub meeting_from: Option<DateTime<Utc>>,
+    /// Meeting mode time in earlier, ended periods of this timer.
+    #[serde(default)]
+    pub meeting_done_secs: i64,
+    /// Sampled time spent in meeting mode: left out of the activity figure.
+    #[serde(default)]
+    pub meeting_sampled_secs: i64,
 }
 
 impl Session {
     pub fn new(entry_id: u64, started_at: DateTime<Utc>) -> Self {
-        Self { entry_id, started_at, idle_since: None, last_seen: None, local_start: false }
+        Self { entry_id, started_at, idle_since: None, last_seen: None, local_start: false, active_secs: 0, sampled_from: None, last_sample: None,
+            meeting_until: None, meeting_from: None, meeting_done_secs: 0, meeting_sampled_secs: 0 }
     }
 
     /// The user went idle at `since`. Idle that began before the timer started counts from
@@ -58,6 +78,72 @@ impl Session {
     /// minute, at least 1.
     pub fn worked_minutes(&self, until: DateTime<Utc>) -> i64 {
         (((until - self.started_at).num_seconds().max(0) + 30) / 60).max(1)
+    }
+
+    /// Record one activity sample at `now`: `idle_secs` since the last keyboard or mouse input.
+    /// The time since the previous sample (at most `step`) counts as active when there was input
+    /// within it. A long gap (sleep, app closed) counts at most one step, so it isn't active.
+    pub fn sample(&mut self, now: DateTime<Utc>, idle_secs: u64, step: i64) {
+        let Some(since) = self.step_since(now, step) else { return };
+        if (idle_secs as i64) < since.max(1) {
+            self.active_secs += since;
+        }
+    }
+
+    /// A sample taken in meeting mode: that time is left out of the activity figure.
+    pub fn sample_meeting(&mut self, now: DateTime<Utc>, step: i64) {
+        if let Some(since) = self.step_since(now, step) {
+            self.meeting_sampled_secs += since;
+        }
+    }
+
+    fn step_since(&mut self, now: DateTime<Utc>, step: i64) -> Option<i64> {
+        let Some(last) = self.last_sample.replace(now) else {
+            self.sampled_from = Some(now);
+            return None;
+        };
+        Some((now - last).num_seconds().clamp(0, step))
+    }
+
+    /// Meeting mode is on at `now`.
+    pub fn in_meeting(&self, now: DateTime<Utc>) -> bool {
+        self.meeting_until.is_some_and(|u| now < u)
+    }
+
+    /// Turn meeting mode on from `now` for `minutes`.
+    pub fn start_meeting(&mut self, now: DateTime<Utc>, minutes: i64) {
+        if !self.in_meeting(now) {
+            self.end_meeting(now);
+            self.meeting_from = Some(now);
+        }
+        self.meeting_until = Some(now + Duration::minutes(minutes));
+    }
+
+    /// Turn meeting mode off at `at` (or when it ran out, if earlier).
+    pub fn end_meeting(&mut self, at: DateTime<Utc>) {
+        if let (Some(from), Some(until)) = (self.meeting_from.take(), self.meeting_until.take()) {
+            self.meeting_done_secs += (at.min(until) - from).num_seconds().max(0);
+        }
+    }
+
+    /// Whole minutes this timer spent in meeting mode up to `until` (`None` if never).
+    pub fn meeting_minutes(&self, until: DateTime<Utc>) -> Option<u32> {
+        let open = match (self.meeting_from, self.meeting_until) {
+            (Some(f), Some(u)) => (until.min(u) - f).num_seconds().max(0),
+            _ => 0,
+        };
+        let secs = self.meeting_done_secs + open;
+        (secs > 0 || self.meeting_from.is_some()).then(|| ((secs + 59) / 60) as u32)
+    }
+
+    /// Share of the measured time, up to `until`, that had input (0-100). `None` when the app
+    /// measured less than 2 minutes of this timer.
+    pub fn activity(&self, until: DateTime<Utc>) -> Option<u8> {
+        let span = (until - self.sampled_from?).num_seconds() - self.meeting_sampled_secs;
+        if span < 120 {
+            return None;
+        }
+        Some((self.active_secs * 100 / span).clamp(0, 100) as u8)
     }
 
     pub fn worked_secs(&self, now: DateTime<Utc>) -> i64 {
@@ -172,6 +258,56 @@ mod tests {
         s.heartbeat(t(20), Duration::minutes(TEN));
         s.on_idle(t(15));
         assert_eq!(s.heartbeat(t(60), Duration::minutes(TEN)), Some(t(15)));
+    }
+
+    #[test]
+    fn activity_counts_steps_with_input() {
+        let mut s = Session::new(1, t(0));
+        assert_eq!(s.activity(t(10)), None);
+        let at = |sec: i64| t(0) + Duration::seconds(sec);
+        s.sample(at(0), 0, 30);
+        for i in 1..=20 {
+            // Input in the first 5 minutes, none in the next 5 (idle grows).
+            let idle = if i <= 10 { 5 } else { (i - 10) as u64 * 30 };
+            s.sample(at(i * 30), idle, 30);
+        }
+        assert_eq!(s.activity(at(300)), Some(100));
+        assert_eq!(s.activity(at(600)), Some(50));
+        // Too little measured: no figure.
+        let mut short = Session::new(2, t(0));
+        short.sample(at(0), 0, 30);
+        short.sample(at(30), 0, 30);
+        assert_eq!(short.activity(at(60)), None);
+        // A sleep gap counts one step at most.
+        let mut gap = Session::new(3, t(0));
+        gap.sample(at(0), 0, 30);
+        gap.sample(at(3600), 0, 30);
+        assert_eq!(gap.activity(at(3600)), Some(0));
+    }
+
+    #[test]
+    fn meeting_mode_time_and_activity() {
+        let at = |sec: i64| t(0) + Duration::seconds(sec);
+        let mut s = Session::new(1, t(0));
+        assert_eq!(s.meeting_minutes(t(5)), None);
+        s.sample(at(0), 0, 30);
+        for i in 1..=10 {
+            s.sample(at(i * 30), 0, 30); // 5 min typing
+        }
+        s.start_meeting(at(300), 120);
+        assert!(s.in_meeting(at(301)));
+        for i in 11..=30 {
+            s.sample_meeting(at(i * 30), 30); // 10 min on a call, no input
+        }
+        s.end_meeting(at(900));
+        assert!(!s.in_meeting(at(901)));
+        // The call is left out of the figure: 5 min measured, all with input.
+        assert_eq!(s.activity(at(900)), Some(100));
+        assert_eq!(s.meeting_minutes(at(900)), Some(10));
+        // Runs out by itself after the limit; minutes stop at the limit.
+        s.start_meeting(at(900), 2);
+        assert!(!s.in_meeting(at(900 + 121)));
+        assert_eq!(s.meeting_minutes(at(5000)), Some(12));
     }
 
     #[test]
